@@ -1,0 +1,70 @@
+# 追猎环境默认配置（可调参数以本文件为准）
+
+sim:
+  dt: 0.05
+  max_episode_steps: 1000
+  seed: null
+
+world:
+  width: 20.0
+  height: 20.0
+  origin_x: 0.0
+  origin_y: 0.0
+
+agents:
+  n_hunters: 2
+  n_escapers: 1
+  hunter_limits:
+    max_speed: 4.0
+    max_accel: 3.0
+    max_omega: 2.5
+  escaper_limits:
+    max_speed: 5.0
+    max_accel: 4.0
+    max_omega: 3.0
+  spawn:
+    mode: uniform
+    disk_radius_frac: 0.35
+
+visibility:
+  view_radius: 6.0
+  use_sector_fov: false
+  fov_deg: null
+  k_visible: 8
+
+capture:
+  capture_radius: 0.75
+  remove_captured: true
+
+observation:
+  use_ego_frame_for_others: false
+  include_remaining_steps: true
+  include_captured_count: true
+
+rewards:
+  hunter_step: 0.0
+  hunter_capture: 10.0
+  hunter_win: 50.0
+  hunter_approach_shaping_scale: 0.0
+  escaper_step: 0.0
+  escaper_survive: 0.01
+  escaper_caught_penalty: -10.0
+  escaper_all_caught_penalty: -50.0
+
+vectorization:
+  num_envs: 1
+
+render:
+  window_width: 800
+  window_height: 800
+  fps: 60
+  draw_view_radius: true
+  draw_sector: false
+  draw_trajectories: true
+  trajectory_max_points: 2000
+
+human_control:
+  accel_step: 1.0
+  omega_step: 1.5
+  initial_control_agent: hunter
+  initial_agent_index: 0

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hunt-env"
+version = "0.1.0"
+description = "追猎式多智能体强化学习环境"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "gymnasium>=0.29",
+  "pettingzoo>=1.24",
+  "pygame>=2.5",
+  "pyyaml>=6.0",
+  "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hunt_env*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

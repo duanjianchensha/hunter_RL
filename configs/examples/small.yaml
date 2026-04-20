@@ -1,0 +1,68 @@
+# 小地图、少智能体示例（继承思路：复制后只改差异）
+
+sim:
+  dt: 0.05
+  max_episode_steps: 500
+  seed: 42
+
+world:
+  width: 12.0
+  height: 12.0
+  origin_x: 0.0
+  origin_y: 0.0
+
+agents:
+  n_hunters: 1
+  n_escapers: 1
+  hunter_limits:
+    max_speed: 3.5
+    max_accel: 3.0
+    max_omega: 2.5
+  escaper_limits:
+    max_speed: 4.5
+    max_accel: 4.0
+    max_omega: 3.0
+  spawn:
+    mode: disk
+    disk_radius_frac: 0.3
+
+visibility:
+  view_radius: 5.0
+  use_sector_fov: false
+  fov_deg: null
+  k_visible: 4
+
+capture:
+  capture_radius: 0.6
+  remove_captured: true
+
+observation:
+  use_ego_frame_for_others: false
+  include_remaining_steps: true
+  include_captured_count: true
+
+rewards:
+  hunter_step: 0.0
+  hunter_capture: 10.0
+  hunter_win: 50.0
+  hunter_approach_shaping_scale: 0.0
+  escaper_step: 0.0
+  escaper_survive: 0.02
+  escaper_caught_penalty: -10.0
+  escaper_all_caught_penalty: -50.0
+
+vectorization:
+  num_envs: 1
+
+render:
+  window_width: 640
+  window_height: 640
+  fps: 60
+  draw_view_radius: true
+  draw_sector: false
+
+human_control:
+  accel_step: 1.0
+  omega_step: 1.5
+  initial_control_agent: hunter
+  initial_agent_index: 0

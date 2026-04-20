@@ -1,0 +1,13 @@
+# Conda 环境：在项目根目录执行
+#   conda env create -f environment.yml
+# 若已存在同名环境：conda env remove -n hunt-env -y 后重试，或使用
+#   conda env update -f environment.yml --prune
+name: hunt-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # 引号避免 YAML 将 [dev] 解析为结构
+      - "-e .[dev]"
