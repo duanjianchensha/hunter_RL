@@ -1,0 +1,58 @@
+# Byte-compiled / 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# 虚拟环境（勿写 env/，会误伤 hunt_env/env/ 目录）
+.venv/
+venv/
+
+# 打包与安装元数据
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# 测试与覆盖率
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 类型检查存根缓存（若使用）
+.pytype/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 训练与实验产出（按需调整：若需提交小模型可改为具体路径 + !例外规则）
+checkpoints/
+runs/
+logs/
+wandb/
+mlruns/
+*.pt
+*.pth
+*.ckpt
+
+# 本地/编辑器（若团队需共享 .vscode，可删除下一行）
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Cursor（本地会话与索引，一般不纳入版本库）
+.cursor/

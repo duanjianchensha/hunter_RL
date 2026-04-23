@@ -29,6 +29,14 @@ pip install -e ".[dev]"
 python scripts/human_play.py --config configs/default.yaml
 ```
 
+## 规则基线（预训练/示范）
+
+猎人追击最近逃脱者、逃脱者逃离最近猎人（使用仿真器全局位置，非神经网络观测）：
+
+```powershell
+python scripts/viz_rule_baseline.py --config configs/default.yaml --max-episodes 3
+```
+
 ## 测试
 
 ```powershell

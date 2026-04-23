@@ -19,10 +19,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
+rl = ["torch>=2.1"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["hunt_env*"]
+include = ["hunt_env*", "hunt_rl*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

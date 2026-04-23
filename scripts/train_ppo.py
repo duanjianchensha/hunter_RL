@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+PPO 训练入口：CPU 默认可跑；若安装 CUDA 版 PyTorch 且可见 GPU，自动用 GPU。
+
+示例：
+  pip install -e ".[rl]"
+  python scripts/train_ppo.py --config configs/default.yaml --total-steps 50000
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import numpy as np
+
+from hunt_env.env.vectorized import HuntVectorizedEnv
+from hunt_rl.device import get_train_device
+from hunt_rl.trainer import MultiAgentPPOTrainer, PPOConfig
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="追猎环境 PPO 训练（PyTorch）")
+    p.add_argument("--config", type=str, default="configs/default.yaml", help="YAML 配置路径")
+    p.add_argument("--total-steps", type=int, default=100_000, help="目标环境步数（约等于并行 env 数 × rollout 步数 × 更新次数）")
+    p.add_argument("--rollout-len", type=int, default=2048, help="每次更新前采集的步数")
+    p.add_argument("--num-envs", type=int, default=None, help="并行环境数（默认读配置 vectorization.num_envs）")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
+    p.add_argument("--save", type=str, default=None, help="checkpoint 保存路径（.pt）")
+    p.add_argument("--save-every", type=int, default=50_000, help="每隔多少环境步保存一次")
+    p.add_argument("--lr", type=float, default=3e-4)
+    args = p.parse_args()
+
+    if args.device == "auto":
+        device = get_train_device(prefer_cuda=True)
+    elif args.device == "cuda":
+        device = get_train_device(prefer_cuda=True)
+        if device.type != "cuda":
+            raise RuntimeError("指定了 --device cuda 但当前不可用（未装 CUDA 版 torch 或无 GPU）")
+    else:
+        device = get_train_device(prefer_cuda=False)
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    try:
+        import torch
+
+        torch.manual_seed(args.seed)
+        if device.type == "cuda":
+            torch.cuda.manual_seed_all(args.seed)
+    except ImportError as e:
+        raise SystemExit("需要安装 PyTorch：pip install -e \".[rl]\"") from e
+
+    env = HuntVectorizedEnv.from_yaml(args.config, num_envs=args.num_envs)
+    ppo_cfg = PPOConfig(lr=args.lr)
+    trainer = MultiAgentPPOTrainer(env.cfg, env, ppo_cfg=ppo_cfg, device=device)
+
+    obs = env.reset(seed=args.seed)
+    total = 0
+    update_idx = 0
+    print(f"device={device}, num_envs={env.num_envs}, rollout_len={args.rollout_len}")
+
+    while total < args.total_steps:
+        next_obs, logs = trainer.train_step(args.rollout_len, obs)
+        obs = next_obs
+        inc = args.rollout_len * env.num_envs
+        total += inc
+        update_idx += 1
+
+        parts = [f"step {total}/{args.total_steps}"]
+        for lg in logs:
+            i = int(lg.get("agent_idx", 0))
+            parts.append(f"ag{i} loss={lg['loss']:.4f} pg={lg['pg']:.4f} v={lg['v']:.4f}")
+        print(" | ".join(parts))
+
+        if args.save and total // args.save_every > (total - inc) // args.save_every:
+            Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+            trainer.save(args.save)
+            print(f"saved {args.save}")
+
+    if args.save:
+        trainer.save(args.save)
+        print(f"final save {args.save}")
+
+
+if __name__ == "__main__":
+    main()

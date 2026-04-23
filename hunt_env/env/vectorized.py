@@ -31,9 +31,10 @@ class HuntVectorizedEnv:
         self.obs_dim = self.engine.obs_dim()
 
     @classmethod
-    def from_yaml(cls, path: str | None = None) -> HuntVectorizedEnv:
+    def from_yaml(cls, path: str | None = None, *, num_envs: int | None = None) -> HuntVectorizedEnv:
         cfg = load_config(path)
-        return cls(cfg=cfg, num_envs=cfg.vectorization.num_envs)
+        n = cfg.vectorization.num_envs if num_envs is None else num_envs
+        return cls(cfg=cfg, num_envs=n)
 
     def reset(self, seed: int | None = None) -> np.ndarray:
         return self.engine.reset(seed=seed)

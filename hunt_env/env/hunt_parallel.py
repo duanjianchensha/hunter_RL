@@ -129,6 +129,11 @@ class HuntParallelEnv(ParallelEnv):
         return_rgb = self.render_mode == "rgb_array"
         return self._renderer.render(self._engine, env_index=0, return_rgb=return_rgb)
 
+    @property
+    def engine(self) -> HuntBatchEngine:
+        """只读访问仿真核，供规则基线/调试使用。"""
+        return self._engine
+
     def close(self) -> None:
         if self._renderer is not None:
             self._renderer.close()

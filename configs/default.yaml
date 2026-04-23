@@ -12,7 +12,7 @@ world:
   origin_y: 0.0
 
 agents:
-  n_hunters: 2
+  n_hunters: 1
   n_escapers: 1
   hunter_limits:
     max_speed: 4.0
@@ -30,7 +30,8 @@ visibility:
   view_radius: 6.0
   use_sector_fov: false
   fov_deg: null
-  k_visible: 8
+  # 1v1 时槽位可少；若改回多智能体可再增大
+  k_visible: 4
 
 capture:
   capture_radius: 0.75
