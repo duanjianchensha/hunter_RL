@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -17,6 +17,7 @@ from torch.distributions import Normal
 
 from hunt_env.config.schema import HuntEnvConfig
 from hunt_env.env.vectorized import HuntVectorizedEnv
+from hunt_env.policies.rules import rule_action_escaper
 from hunt_rl.actor_critic import ActorCritic, action_bounds_from_cfg
 from hunt_rl.device import get_train_device
 
@@ -67,6 +68,7 @@ class MultiAgentPPOTrainer:
         hidden_sizes: tuple[int, ...] = (256, 256),
         device: torch.device | None = None,
         use_cuda_if_available: bool = True,
+        escaper_mode: Literal["learn", "rule"] = "learn",
     ):
         self.cfg = cfg
         self.env = vec_env
@@ -76,13 +78,19 @@ class MultiAgentPPOTrainer:
         self.obs_dim = vec_env.obs_dim
         self.ppo = ppo_cfg or PPOConfig()
         self.device = device or get_train_device(use_cuda_if_available)
+        if escaper_mode not in ("learn", "rule"):
+            raise ValueError("escaper_mode 应为 'learn' 或 'rule'")
+        if escaper_mode == "rule" and self.nh < 1:
+            raise ValueError("escaper_mode=rule 时需至少 1 名猎人用于 RL")
+        # 逃脱者用规则控制时，不建策略网，仅 PPO 训练猎人
+        self._use_rule_escaper: bool = escaper_mode == "rule" and self.ne > 0
 
         self.policies: dict[str, ActorCritic] = {}
         self.optimizers: dict[str, optim.Optimizer] = {}
         if self.nh > 0:
             self.policies["hunter"] = ActorCritic(self.obs_dim, 2, hidden_sizes).to(self.device)
             self.optimizers["hunter"] = optim.Adam(self.policies["hunter"].parameters(), lr=self.ppo.lr)
-        if self.ne > 0:
+        if self.ne > 0 and not self._use_rule_escaper:
             self.policies["escaper"] = ActorCritic(self.obs_dim, 2, hidden_sizes).to(self.device)
             self.optimizers["escaper"] = optim.Adam(self.policies["escaper"].parameters(), lr=self.ppo.lr)
 
@@ -122,6 +130,18 @@ class MultiAgentPPOTrainer:
         for t in range(num_steps):
             actions = np.zeros((e, n, 2), dtype=np.float32)
             for ni in range(n):
+                if self._use_rule_escaper and ni >= self.nh:
+                    eng = self.env.engine
+                    for ei in range(e):
+                        a, w = rule_action_escaper(eng, ei, ni, self.cfg)
+                        act_buf[t, ei, ni, 0] = a
+                        act_buf[t, ei, ni, 1] = w
+                    actions[:, ni, 0] = act_buf[t, :, ni, 0]
+                    actions[:, ni, 1] = act_buf[t, :, ni, 1]
+                    logp_buf[t, :, ni] = 0.0
+                    val_buf[t, :, ni] = 0.0
+                    continue
+
                 pol = self._policy(ni)
                 lo, hi = self._bounds(ni)
                 ot = torch.as_tensor(obs_buf[t, :, ni, :], device=self.device)
@@ -150,6 +170,9 @@ class MultiAgentPPOTrainer:
 
             with torch.no_grad():
                 for ni in range(n):
+                    if self._use_rule_escaper and ni >= self.nh:
+                        val_buf[t + 1, :, ni] = 0.0
+                        continue
                     pol = self._policy(ni)
                     o2 = torch.as_tensor(obs_buf[t + 1, :, ni, :], device=self.device)
                     _, _, v2 = pol(o2)
@@ -228,19 +251,36 @@ class MultiAgentPPOTrainer:
             stats[k] /= max(n_upd, 1)
         return stats
 
-    def train_step(self, num_steps: int, obs: np.ndarray) -> tuple[np.ndarray, list[dict[str, float]]]:
+    def train_step(
+        self, num_steps: int, obs: np.ndarray
+    ) -> tuple[np.ndarray, list[dict[str, float]], dict[str, float]]:
         next_obs, storage = self.collect_rollout(num_steps, obs)
+        metrics: dict[str, float] = {}
+        if self.nh > 0:
+            rh = storage["rew"][:, :, : self.nh]
+            metrics["hunter_rew_mean"] = float(np.mean(rh))
+            metrics["hunter_rew_sum"] = float(np.sum(rh))
+        if self.ne > 0:
+            re = storage["rew"][:, :, self.nh :]
+            metrics["escaper_rew_mean"] = float(np.mean(re))
+
         logs: list[dict[str, float]] = []
-        for ni in range(self.n_agents):
+        update_range = range(self.nh) if self._use_rule_escaper else range(self.n_agents)
+        for ni in update_range:
             s = self.ppo_update_agent(storage, ni)
             s["agent_idx"] = float(ni)
+            s["role"] = "hunter" if ni < self.nh else "escaper"
             logs.append(s)
-        return next_obs, logs
+        return next_obs, logs, metrics
 
     def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload: dict[str, Any] = {"cfg": self.cfg.model_dump(), "state_dicts": {}}
+        payload: dict[str, Any] = {
+            "cfg": self.cfg.model_dump(),
+            "state_dicts": {},
+            "escaper_mode": "rule" if self._use_rule_escaper else "learn",
+        }
         for k, pol in self.policies.items():
             payload["state_dicts"][k] = pol.state_dict()
         torch.save(payload, path)
@@ -258,7 +298,12 @@ class MultiAgentPPOTrainer:
             payload = torch.load(path, map_location="cpu", weights_only=False)
         except TypeError:
             payload = torch.load(path, map_location="cpu")
-        trainer = cls(cfg, vec_env, **kwargs)
+        load_kwargs = {**kwargs}
+        if "escaper_mode" not in load_kwargs and isinstance(payload, dict):
+            em = payload.get("escaper_mode")
+            if em in ("learn", "rule"):
+                load_kwargs["escaper_mode"] = em
+        trainer = cls(cfg, vec_env, **load_kwargs)
         for k, sd in payload["state_dicts"].items():
             if k in trainer.policies:
                 trainer.policies[k].load_state_dict(sd)

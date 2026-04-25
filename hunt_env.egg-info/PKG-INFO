@@ -12,6 +12,8 @@ Requires-Dist: pyyaml>=6.0
 Requires-Dist: pydantic>=2.5
 Provides-Extra: dev
 Requires-Dist: pytest>=7.4; extra == "dev"
+Provides-Extra: rl
+Requires-Dist: torch>=2.1; extra == "rl"
 
 # hunt-env
 
@@ -36,10 +38,20 @@ cd d:\work\test5
 pip install -e ".[dev]"
 ```
 
+程序化覆盖 YAML 片段请使用 `load_config(merge={"sim": {"max_episode_steps": 500}})`，勿写成 `load_config(overrides=...)`（会与 `**kwargs` 语义冲突）。
+
 ## 人类试玩
 
 ```powershell
 python scripts/human_play.py --config configs/default.yaml
+```
+
+## 规则基线（预训练/示范）
+
+猎人追击最近逃脱者、逃脱者逃离最近猎人（使用仿真器全局位置，非神经网络观测）：
+
+```powershell
+python scripts/viz_rule_baseline.py --config configs/default.yaml --max-episodes 3
 ```
 
 ## 测试

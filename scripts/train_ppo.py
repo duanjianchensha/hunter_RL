@@ -69,13 +69,15 @@ def main() -> None:
     print(f"device={device}, num_envs={env.num_envs}, rollout_len={args.rollout_len}")
 
     while total < args.total_steps:
-        next_obs, logs = trainer.train_step(args.rollout_len, obs)
+        next_obs, logs, metrics = trainer.train_step(args.rollout_len, obs)
         obs = next_obs
         inc = args.rollout_len * env.num_envs
         total += inc
         update_idx += 1
 
         parts = [f"step {total}/{args.total_steps}"]
+        if "hunter_rew_mean" in metrics:
+            parts.append(f"h_rew_mean={metrics['hunter_rew_mean']:.4f}")
         for lg in logs:
             i = int(lg.get("agent_idx", 0))
             parts.append(f"ag{i} loss={lg['loss']:.4f} pg={lg['pg']:.4f} v={lg['v']:.4f}")
