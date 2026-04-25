@@ -131,11 +131,10 @@ class MultiAgentPPOTrainer:
             actions = np.zeros((e, n, 2), dtype=np.float32)
             for ni in range(n):
                 if self._use_rule_escaper and ni >= self.nh:
-                    eng = self.env.engine
                     for ei in range(e):
-                        a, w = rule_action_escaper(eng, ei, ni, self.cfg)
-                        act_buf[t, ei, ni, 0] = a
-                        act_buf[t, ei, ni, 1] = w
+                        raw = rule_action_escaper(obs_buf[t, ei, ni], self.cfg)
+                        act_buf[t, ei, ni, 0] = float(raw[0])
+                        act_buf[t, ei, ni, 1] = float(raw[1])
                     actions[:, ni, 0] = act_buf[t, :, ni, 0]
                     actions[:, ni, 1] = act_buf[t, :, ni, 1]
                     logp_buf[t, :, ni] = 0.0

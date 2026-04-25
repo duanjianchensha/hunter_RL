@@ -21,8 +21,8 @@ def self_obs_dim() -> int:
 
 
 def other_slot_dim() -> int:
-    """单个 Top-K 槽位：rel_x, rel_y, vx, vy, theta, mask。"""
-    return 6
+    """单个 Top-K 槽位：rel_x, rel_y, rvx, rvy, theta_j, mask, other_is_escaper（1/0）。"""
+    return 7
 
 
 def total_obs_dim(cfg: HuntEnvConfig) -> int:
@@ -34,6 +34,8 @@ def total_obs_dim(cfg: HuntEnvConfig) -> int:
         extra += 1
     if cfg.observation.include_captured_count:
         extra += 1
+    if cfg.observation.include_world_bounds:
+        extra += 4
     return base + extra
 
 

@@ -42,8 +42,9 @@ def build_observations_batch(
     vis = visible_pair_mask(pos, theta, active, cfg)
     _, idx_top = topk_visible_indices(pos, active, vis, cfg.visibility.k_visible)
     k = cfg.visibility.k_visible
+    nh = cfg.agents.n_hunters
 
-    other = np.zeros((e, n, k, 6), dtype=np.float64)
+    other = np.zeros((e, n, k, 7), dtype=np.float64)
     for ei in range(e):
         for i in range(n):
             for t in range(k):
@@ -69,8 +70,9 @@ def build_observations_batch(
                 other[ei, i, t, 3] = rvy
                 other[ei, i, t, 4] = float(wrap_angle(np.asarray(theta[ei, j], dtype=np.float64)))
                 other[ei, i, t, 5] = 1.0
+                other[ei, i, t, 6] = 1.0 if j >= nh else 0.0
 
-    other_flat = other.reshape(e, n, k * 6)
+    other_flat = other.reshape(e, n, k * 7)
 
     parts = [self_part, other_flat]
     if cfg.observation.include_remaining_steps:
@@ -86,6 +88,21 @@ def build_observations_batch(
         caught_frac = (ne - np.sum(escapers.astype(np.float64), axis=-1)) / max(float(ne), 1.0)
         caught_frac = np.broadcast_to(caught_frac[:, None], (e, n))
         parts.append(caught_frac[..., None])
+
+    if cfg.observation.include_world_bounds:
+        wcfg = cfg.world
+        ox = wcfg.origin_x
+        oy = wcfg.origin_y
+        ww = wcfg.width
+        hh = wcfg.height
+        x = pos[..., 0]
+        y = pos[..., 1]
+        d_west = x - ox
+        d_east = (ox + ww) - x
+        d_south = y - oy
+        d_north = (oy + hh) - y
+        wall = np.stack([d_west, d_east, d_south, d_north], axis=-1)
+        parts.append(wall)
 
     return np.concatenate(parts, axis=-1)
 

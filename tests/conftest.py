@@ -40,6 +40,7 @@ def minimal_cfg() -> HuntEnvConfig:
                 "use_ego_frame_for_others": False,
                 "include_remaining_steps": True,
                 "include_captured_count": True,
+                "include_world_bounds": True,
             },
             "rewards": {
                 "hunter_step": 0.0,

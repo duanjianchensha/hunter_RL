@@ -1,7 +1,7 @@
 """
-规则策略可视化：所有智能体使用基于规则的策略（猎人追最近逃脱者，逃脱者逃离最近猎人）。
+规则策略可视化：与 RL **同一 `obs` 向量** 输入；猎人/逃脱者用 `build_rule_actions_dict` 从观测算动作。
 
-使用全局真实状态，非策略网络观测；用于预训练示范或行为检查。
+可见目标仅来自观测中 Top-K 槽位 + `other_is_escaper` 位；不访问引擎真值。
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def main() -> None:
     pygame.init()
     clock = pygame.time.Clock()
 
-    print("规则说明：猎人→追击最近存活逃脱者；逃脱者→逃离最近猎人（均用全局位置）。")
+    print("规则说明：与 RL 同观测维；槽位中可见的最近敌对方 → 追/逃；否则搜索或向心贴边。")
     print("按 ESC 或关闭窗口退出。")
 
     obs, infos = env.reset(seed=args.seed)
@@ -54,8 +54,7 @@ def main() -> None:
                 running = False
 
         actions = build_rule_actions_dict(
-            env.engine,
-            env_index=0,
+            {a: obs[a] for a in obs},
             cfg=cfg,
             agent_names=env.possible_agents,
         )

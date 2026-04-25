@@ -2,6 +2,8 @@
 
 追猎式多智能体强化学习环境（Python）：矩形硬边界、独立视野、配置文件驱动。
 
+**详细说明**（结构、接口、物理与观测、奖励、PPO 与脚本）：见 [docs/PROJECT.md](docs/PROJECT.md)。修改实现时请同步更新该文档（仓库内 Cursor 规则已要求）。
+
 ## 环境（推荐 Conda）
 
 新建并安装（需在项目根目录执行，`environment.yml` 与 `pyproject.toml` 同级）：

@@ -92,6 +92,10 @@ class ObservationConfig(BaseModel):
     )
     include_remaining_steps: bool = True
     include_captured_count: bool = True
+    include_world_bounds: bool = Field(
+        default=True,
+        description="追加 4 维：到西/东/下/上边界距离（世界系），与规则基线及边界启发共用",
+    )
 
 
 class RewardsConfig(BaseModel):
