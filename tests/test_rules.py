@@ -44,7 +44,7 @@ def test_hunter_escaper_from_obs_shape() -> None:
 
 
 def test_hunter_uses_search_when_no_visible_escaper() -> None:
-    """全零槽位（无有效 mask）时猎人走搜索，不应因隐式全知而大幅追击。"""
+    """全零有效槽时猎人走搜索回退，动作仍落在限制内。"""
     cfg = load_config()
     d = total_obs_dim(cfg)
     o = np.zeros(d, dtype=np.float32)

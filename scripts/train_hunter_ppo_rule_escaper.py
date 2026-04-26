@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-仅训练猎人，逃脱者使用规则策略（hunt_env.policies.rules）——用于在 ~10 分钟内
-观察 loss 与奖励是否正常变化。
+仅训练猎人，逃脱者用规则策略 `rule_action_escaper(当前步 obs, cfg)`（与 PPO
+分支读取同一 `obs` 张量，非引擎真值）——用于在 ~10 分钟内观察 loss 与奖励是否正常变化。
 
   pip install -e ".[rl]"
   python scripts/train_hunter_ppo_rule_escaper.py --time-sec 600

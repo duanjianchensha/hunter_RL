@@ -194,22 +194,25 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 
 ### 11.1 网络 `ActorCritic`（`actor_critic.py`）
 
-- 共享 MLP 骨干；**策略头**输出动作均值，**可学习** `log_std`（各维独立，对角高斯）；**价值头**标量 V(s)。
-- `act`：采样或确定性取均值；**执行动作为 `clip` 到环境 `low/high` 后送入环境**；`log_prob` 在未裁剪的高斯变量上计算（PPO 常见近似）。
-- `evaluate`：给定存储的**未裁剪**动作用于 PPO 的比率与熵；接口仍传入 bound 以兼容（实现与 `act` 一致）。
+- 共享 MLP 骨干；**策略头**输出动作均值，**可学习** `log_std`（各维独立，对角高斯）；**价值头**标量 V(s)，输入为**经训练器归一化**后的观测（当 `PPOConfig.normalize_obs` 为真，见 11.2）。
+- `act`：在**归一化动作空间** ℝ² 上高斯采样（或取均值），将样本 **clip 到每维 `[-1,1]`** 后按 `low + 0.5 * (a_unit + 1) * (high - low)` 仿射为环境 `low/high` 并送入环境；`log_prob` 仍对**未截断的 raw** 用对角高斯密度（PPO 常见「clip 高斯」设定）。
+- `evaluate`：给定存储的**未截断** `raw` 动作用于 PPO 比率与熵；`action_low`/`action_high` 在评估头中不进入 log_prob。
 
-`action_bounds_from_cfg(cfg, role)`：`role` 为 `"hunter"` 或 `"escaper"`，返回与 YAML 中 `max_accel`/`max_omega` 一致的对称边界。
+`action_bounds_from_cfg(cfg, role)`：`role` 为 `"hunter"` 或 `"escaper"`，返回与 YAML 中 `max_accel`/`max_omega` 一致的对称边界，用于上式仿射。
 
 ### 11.2 多智能体 PPO `MultiAgentPPOTrainer`（`trainer.py`）
 
-- **角色分组**：**所有猎人共享**一个 `ActorCritic`（`policies["hunter"]`）；**所有逃脱者共享**一个 `ActorCritic`（`policies["escaper"]`），除非 `escaper_mode="rule"`（此时不建逃脱者网络，逃脱者动作用 `rule_action_escaper` 生成，logp/价值对该角色为 0）。
-- **采样子循环**：对每个时间步、每个环境、每个智能体，按索引选策略与动作上下界，收集 `obs, raw_action, logp, value, reward, done`。
-- **GAE**（`compute_gae`）：`rewards` `(T, E)`，按环境独立 bootstrap；`dones` 为标量或从 `term|trunc` 对全体 env 的掩码；实现见该文件。
+- **角色分组**：**所有猎人共享**一个 `ActorCritic`（`policies["hunter"]`）；**所有逃脱者共享**一个 `ActorCritic`（`policies["escaper"]`），除非 `escaper_mode="rule"`（此时不建逃脱者网络，逃脱者动作用 `rule_action_escaper(原始 obs, cfg)` 生成，与 PPO 分支**不共用**归一化观测，logp/价值对该角色为 0）。
+- **观测/奖励规约**（`running_stats.py`）：
+  - **观测**：Welford 式 `RunningMeanStd` 按**角色**分猎人/逃脱者，在线 `update` 用环境返回的**原始**向量；前向时 `(x-μ)/σ` 再 **clip 到 `[-obs_clip, obs_clip]`**（`PPOConfig.obs_clip`）。`escaper_mode=rule` 时仅维护猎人 `obs` 统计。步末用 `o_{t+1}` 估 V 时**不**对同一条 o 再 `update`（避免与下一步 act 时双计）。
+  - **奖励**：`RunningRewardRMS` 按角色维护标量方差，GAE 使用 `r / (sqrt(var)+eps)`；`train_step` 里 `hunter_rew_mean` 等仍对**原奖励**做汇总。
+- **采样子循环**：`storage["obs"]` 存**原始**观测；策略侧经上述规约后调用 `act` 得到环境动作与**未截断** `raw` 存入 `actions`。
+- **GAE**（`compute_gae`）：对**规约后**的逐智能体 `rewards` `(T, E)` 与 `values` 计算；`dones` 为 `term|trunc` 对 env 的掩码；实现见该文件。
 - **Reset 行为**：`num_envs==1` 时，任一步 `done` 则立即 `reset` 下一步观测；`num_envs>1` 时仅当**本步所有 env 都 done** 才整批 `reset`（与注释一致）。
 - **PPO 更新**：对每个要训练的智能体索引分别调用 `ppo_update_agent`（独立优化器与损失聚合）；`escaper_mode=rule` 时只更新 `0..nh-1` 猎人（即逃脱者不更新）。
-- **保存/加载**：`save` 写入 `cfg.model_dump()`、`state_dicts`、**`escaper_mode`**，便于 `load` 时恢复；`load` 若 checkpoint 含 `escaper_mode` 会注入构造函数。
+- **保存/加载**：`save` 写入 `cfg.model_dump()`、`state_dicts`、**`escaper_mode`**，以及有则写入 **`obs_rms` / `rew_rms` 的 `get_state()`**；`load` 若存在则恢复统计量，旧 checkpoint 可缺省。
 
-`PPOConfig`：学习率、γ、GAE λ、clip、熵/价值系数、epoch 与 minibatch 数、是否标准化 advantage 等（见类定义默认值）。
+`PPOConfig`：含 `normalize_obs` / `normalize_reward` / `obs_clip`（默认开启规约，见类定义）及学习率、γ、GAE λ、clip、熵/价值系数、epoch 与 minibatch 数、是否标准化 advantage 等。
 
 ### 11.3 设备（`device.py`）
 
@@ -217,7 +220,7 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 
 ### 11.4 与环境的假设
 
-- 观测维相同、动作维为 2；猎人与逃脱者**边界不同**时通过 `action_bounds_from_cfg` 分角色裁剪。
+- 观测维相同、动作维为 2；猎人与逃脱者**边界不同**时通过 `action_bounds_from_cfg` 在 `act` 内做仿射映射（见 11.1）；规则策略直接输出环境动作空间量。
 
 ---
 
@@ -226,11 +229,11 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 | 脚本 | 作用 |
 |------|------|
 | `scripts/human_play.py` | 键盘控制**一名**智能体（W/S 线加减速，A/D 角速度，Q 切换智能体），其余发零动作；`render_mode=human` |
-| `scripts/viz_rule_baseline.py` | 全用规则策略跑若干局并可视化 |
+| `scripts/viz_rule_baseline.py` | 规则策略：用当步 `obs` 字典（`build_rule_actions_dict`）驱动，不读 `engine` 真值；若干局可视化 |
 | `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device` 等 |
-| `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人、逃脱者走规则；适合短时间验证管线 |
+| `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper` 作用于与 PPO **相同** `obs` 张量；短训验证管线 |
 
-**人类试玩**与真实训练差异：试玩中未控制者动作为零；训练使用完整策略或规则。
+**人类试玩**与真实训练差异：试玩中未控制者动作为零；训练使用 RL 策略或 `escaper_mode=rule` 下与网络**同 obs** 的规则逃脱者。
 
 ---
 
@@ -255,6 +258,7 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 
 ## 16. 文档维护清单（供修改代码时对照）
 
+- 面向新手的**仓库根 `README.md`**：安装路径、人类试玩、**规则基线 API 与语义**、测试命令；与第 10、12 节保持一致。
 - 新增/删除配置键：更新 `config/schema.py`、`configs/*.yaml` 与 **本文件第 4 节、相关算法节**。
 - 改观测/动作形状或语义：第 5、8 节 + `HuntParallelEnv` / `HuntVectorizedEnv` 说明。
 - 改奖励或终止条件：第 6、7 节。

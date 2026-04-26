@@ -13,13 +13,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.distributions import Normal
 
 from hunt_env.config.schema import HuntEnvConfig
 from hunt_env.env.vectorized import HuntVectorizedEnv
 from hunt_env.policies.rules import rule_action_escaper
 from hunt_rl.actor_critic import ActorCritic, action_bounds_from_cfg
 from hunt_rl.device import get_train_device
+from hunt_rl.running_stats import RunningMeanStd, RunningRewardRMS
 
 
 def compute_gae(
@@ -56,6 +56,10 @@ class PPOConfig:
     update_epochs: int = 10
     num_minibatches: int = 4
     normalize_advantage: bool = True
+    # 在线统计：采集步用 raw 更新 RMS，前向用 normalize+clip；PPO 更新时仅 normalize（不重复 update）
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    obs_clip: float = 10.0
 
 
 class MultiAgentPPOTrainer:
@@ -106,6 +110,62 @@ class MultiAgentPPOTrainer:
             [action_bounds_from_cfg(cfg, "hunter" if i < self.nh else "escaper")[1] for i in range(self.n_agents)]
         )
 
+        self._obs_rms: dict[str, RunningMeanStd] = {}
+        self._rew_rms: dict[str, RunningRewardRMS] = {}
+        if self.ppo.normalize_obs:
+            if self.nh > 0:
+                self._obs_rms["hunter"] = RunningMeanStd(self.obs_dim)
+            if self.ne > 0 and not self._use_rule_escaper:
+                self._obs_rms["escaper"] = RunningMeanStd(self.obs_dim)
+        if self.ppo.normalize_reward:
+            if self.nh > 0:
+                self._rew_rms["hunter"] = RunningRewardRMS()
+            if self.ne > 0 and not self._use_rule_escaper:
+                self._rew_rms["escaper"] = RunningRewardRMS()
+
+    @staticmethod
+    def _obs_role(ni: int, nh: int) -> str:
+        return "hunter" if ni < nh else "escaper"
+
+    def _obs_for_policy_forward(self, raw: np.ndarray, agent_idx: int) -> np.ndarray:
+        """
+        采集时：用 raw 更新统计量，再返回 normalize+clip 后的观测给策略网络。
+        raw: (E, d) 或 (T,E,d) 等，最后一维为 d。
+        """
+        r = np.asarray(raw, dtype=np.float32)
+        if not self.ppo.normalize_obs:
+            return r
+        role = self._obs_role(agent_idx, self.nh)
+        m = self._obs_rms[role]
+        m.update(r.astype(np.float64, copy=False))
+        o = m.normalize(r)
+        c = self.ppo.obs_clip
+        return np.clip(o, -c, c).astype(np.float32, copy=False)
+
+    def _obs_for_value_bootstrap(self, raw: np.ndarray, agent_idx: int) -> np.ndarray:
+        """
+        步末用 o_{t+1} 估 V 时**不** update（下一步 act 时会对同一条 o 做 update+norm，避免 Welford 双计）。
+        """
+        return self._obs_for_ppo_replay(raw, agent_idx)
+
+    def _obs_for_ppo_replay(self, raw: np.ndarray, agent_idx: int) -> np.ndarray:
+        """PPO 小批量内：不再次 update，仅 normalize+clip。"""
+        r = np.asarray(raw, dtype=np.float32)
+        if not self.ppo.normalize_obs:
+            return r
+        role = self._obs_role(agent_idx, self.nh)
+        o = self._obs_rms[role].normalize(r)
+        c = self.ppo.obs_clip
+        return np.clip(o, -c, c).astype(np.float32, copy=False)
+
+    def _rew_for_gae(self, r_raw: np.ndarray, agent_idx: int) -> np.ndarray:
+        """(T, E) 原奖励；用于 GAE 的归一化后奖励。"""
+        r = np.asarray(r_raw, dtype=np.float32)
+        if not self.ppo.normalize_reward:
+            return r
+        role = self._obs_role(agent_idx, self.nh)
+        return self._rew_rms[role].normalize(r)
+
     def _bounds(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         if idx < self.nh:
             return self._al_h, self._ah_h
@@ -132,9 +192,9 @@ class MultiAgentPPOTrainer:
             for ni in range(n):
                 if self._use_rule_escaper and ni >= self.nh:
                     for ei in range(e):
-                        raw = rule_action_escaper(obs_buf[t, ei, ni], self.cfg)
-                        act_buf[t, ei, ni, 0] = float(raw[0])
-                        act_buf[t, ei, ni, 1] = float(raw[1])
+                        raw_a = rule_action_escaper(obs_buf[t, ei, ni], self.cfg)
+                        act_buf[t, ei, ni, 0] = float(raw_a[0])
+                        act_buf[t, ei, ni, 1] = float(raw_a[1])
                     actions[:, ni, 0] = act_buf[t, :, ni, 0]
                     actions[:, ni, 1] = act_buf[t, :, ni, 1]
                     logp_buf[t, :, ni] = 0.0
@@ -143,19 +203,21 @@ class MultiAgentPPOTrainer:
 
                 pol = self._policy(ni)
                 lo, hi = self._bounds(ni)
-                ot = torch.as_tensor(obs_buf[t, :, ni, :], device=self.device)
+                o_in = self._obs_for_policy_forward(obs_buf[t, :, ni, :], ni)
+                ot = torch.as_tensor(o_in, device=self.device)
                 with torch.no_grad():
-                    mean, std, val = pol(ot)
-                    dist = Normal(mean, std)
-                    raw = dist.rsample()
-                    logp = dist.log_prob(raw).sum(dim=-1)
-                    act_buf[t, :, ni, :] = raw.cpu().numpy()
-                    logp_buf[t, :, ni] = logp.cpu().numpy()
-                    val_buf[t, :, ni] = val.cpu().numpy()
-                actions[:, ni, :] = np.clip(act_buf[t, :, ni, :], self._lo_np[ni], self._hi_np[ni])
+                    a_env, logp, val, raw = pol.act(ot, lo, hi)
+                    act_buf[t, :, ni, :] = raw.detach().cpu().numpy()
+                    logp_buf[t, :, ni] = logp.detach().cpu().numpy()
+                    val_buf[t, :, ni] = val.detach().cpu().numpy()
+                actions[:, ni, :] = a_env.detach().cpu().numpy()
 
             next_obs, rew, term, trunc, _ = self.env.step(actions)
             rew_buf[t] = rew
+            if self.ppo.normalize_reward and self.nh > 0:
+                self._rew_rms["hunter"].update(rew[:, : self.nh].astype(np.float64))
+            if self.ppo.normalize_reward and self.ne > 0 and not self._use_rule_escaper:
+                self._rew_rms["escaper"].update(rew[:, self.nh :].astype(np.float64))
             done_buf[t] = np.logical_or(term[:, 0], trunc[:, 0])
             # 单并行：终局后立即 reset，避免在吸收态上继续采样。
             # 多并行：仅当本步所有 env 均终局时整批 reset（否则保留 step 输出；GAE 用 done 掩码）。
@@ -173,7 +235,8 @@ class MultiAgentPPOTrainer:
                         val_buf[t + 1, :, ni] = 0.0
                         continue
                     pol = self._policy(ni)
-                    o2 = torch.as_tensor(obs_buf[t + 1, :, ni, :], device=self.device)
+                    o2_in = self._obs_for_value_bootstrap(obs_buf[t + 1, :, ni, :], ni)
+                    o2 = torch.as_tensor(o2_in, device=self.device)
                     _, _, v2 = pol(o2)
                     val_buf[t + 1, :, ni] = v2.cpu().numpy()
 
@@ -192,9 +255,10 @@ class MultiAgentPPOTrainer:
         lo, hi = self._bounds(agent_idx)
 
         obs = storage["obs"][:-1, :, agent_idx, :]
+        obs = self._obs_for_ppo_replay(obs, agent_idx)
         act = storage["actions"][:, :, agent_idx, :]
         old_logp = storage["logp"][:, :, agent_idx]
-        rew = storage["rew"][:, :, agent_idx]
+        rew = self._rew_for_gae(storage["rew"][:, :, agent_idx], agent_idx)
         val = storage["val"][:, :, agent_idx]
         done = storage["done"]
 
@@ -282,6 +346,10 @@ class MultiAgentPPOTrainer:
         }
         for k, pol in self.policies.items():
             payload["state_dicts"][k] = pol.state_dict()
+        if self._obs_rms:
+            payload["obs_rms"] = {k: v.get_state() for k, v in self._obs_rms.items()}
+        if self._rew_rms:
+            payload["rew_rms"] = {k: v.get_state() for k, v in self._rew_rms.items()}
         torch.save(payload, path)
 
     @classmethod
@@ -306,4 +374,12 @@ class MultiAgentPPOTrainer:
         for k, sd in payload["state_dicts"].items():
             if k in trainer.policies:
                 trainer.policies[k].load_state_dict(sd)
+        if "obs_rms" in payload and isinstance(payload["obs_rms"], dict):
+            for k, st in payload["obs_rms"].items():
+                if k in trainer._obs_rms:
+                    trainer._obs_rms[k].set_state(st)
+        if "rew_rms" in payload and isinstance(payload["rew_rms"], dict):
+            for k, st in payload["rew_rms"].items():
+                if k in trainer._rew_rms:
+                    trainer._rew_rms[k].set_state(st)
         return trainer

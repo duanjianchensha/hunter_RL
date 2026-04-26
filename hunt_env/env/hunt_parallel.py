@@ -131,7 +131,7 @@ class HuntParallelEnv(ParallelEnv):
 
     @property
     def engine(self) -> HuntBatchEngine:
-        """只读访问仿真核，供规则基线/调试使用。"""
+        """只读访问仿真核，供调试、可视化、对照；规则策略应使用 `obs` 字典而非依赖此处。"""
         return self._engine
 
     def close(self) -> None:

@@ -17,10 +17,21 @@ def _build_mlp(sizes: list[int], activation: type[nn.Module]) -> nn.Sequential:
     return nn.Sequential(*layers)
 
 
+def denorm_action_from_unit_box(
+    a_unit: torch.Tensor,
+    action_low: torch.Tensor,
+    action_high: torch.Tensor,
+) -> torch.Tensor:
+    """
+    将 a_unit 各维自 [-1,1] 仿射到 [low, high]：a = low + 0.5 * (a_unit + 1) * (high - low)。
+    """
+    return action_low + 0.5 * (a_unit + 1.0) * (action_high - action_low)
+
+
 class ActorCritic(nn.Module):
     """
     对角高斯策略 + 价值头。
-    动作在环境 low/high 内裁剪；log_prob 在未裁剪的高斯上计算（常见近似）。
+    在**归一化动作空间** ℝ² 上采样，再 clip 到 [-1,1]，仿射到环境 [low,high]；log_prob 对未截断的 raw 用高斯密度（与常见 clip 高斯 PPO 一致）。
     """
 
     def __init__(
@@ -52,10 +63,9 @@ class ActorCritic(nn.Module):
         action_low: torch.Tensor,
         action_high: torch.Tensor,
         deterministic: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        采样动作、log_prob、价值。
-        action_low/high: 形状与 action 一致，可为 broadcast (action_dim,) 或 (batch, action_dim)。
+        返回 a_env、logp、v、raw。raw ~ N(μ,σ)（对 logp/缓冲区）；a_n=clip(raw,-1,1) 后仿射为环境动作。
         """
         mean, std, value = self.forward(obs)
         dist = Normal(mean, std)
@@ -64,8 +74,9 @@ class ActorCritic(nn.Module):
         else:
             raw = dist.rsample()
         logp = dist.log_prob(raw).sum(dim=-1)
-        a = torch.max(torch.min(raw, action_high), action_low)
-        return a, logp, value
+        a_n = torch.clamp(raw, -1.0, 1.0)
+        a_env = denorm_action_from_unit_box(a_n, action_low, action_high)
+        return a_env, logp, value, raw
 
     def evaluate(
         self,
@@ -74,7 +85,11 @@ class ActorCritic(nn.Module):
         action_low: torch.Tensor,
         action_high: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """给定观测与已执行动作，计算 log_prob、entropy、value（用于 PPO 更新）。"""
+        """
+        给定已存储的**未截断** raw 动作（高斯前 clip）与归一化后的 obs，计算 log_prob、entropy、v。
+        action_low/high 保留签名兼容，估值头不依赖动作界。
+        """
+        del action_low, action_high
         mean, std, value = self.forward(obs)
         dist = Normal(mean, std)
         logp = dist.log_prob(action).sum(dim=-1)

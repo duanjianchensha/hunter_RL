@@ -16,8 +16,8 @@ agents:
   n_escapers: 1
   hunter_limits:
     max_speed: 4.0
-    max_accel: 3.0
-    max_omega: 2.5
+    max_accel: 4.0
+    max_omega: 4.5
   escaper_limits:
     max_speed: 5.0
     max_accel: 4.0
@@ -44,10 +44,10 @@ observation:
   include_world_bounds: true
 
 rewards:
-  hunter_step: 0.0
+  hunter_step: 0.01
   hunter_capture: 10.0
   hunter_win: 50.0
-  hunter_approach_shaping_scale: 0.0
+  hunter_approach_shaping_scale: 0.1
   escaper_step: 0.0
   escaper_survive: 0.01
   escaper_caught_penalty: -10.0
