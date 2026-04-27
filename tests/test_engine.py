@@ -49,6 +49,17 @@ def test_vectorized_batch_shapes(minimal_cfg) -> None:
     assert obs2.shape == obs.shape
 
 
+def test_step_reward_always_finite_with_approach_shaping(minimal_cfg) -> None:
+    """开启接近塑形时奖励不得出现 nan/inf（引擎用有限占位距离）。"""
+    minimal_cfg.rewards.hunter_approach_shaping_scale = 0.1
+    eng = HuntBatchEngine(minimal_cfg, num_envs=2)
+    eng.reset(seed=0)
+    act = np.zeros((2, eng.n_agents, 2))
+    for _ in range(40):
+        _, rew, _, _, _ = eng.step(act)
+        assert np.all(np.isfinite(rew))
+
+
 def test_timeout_truncation(minimal_cfg) -> None:
     minimal_cfg.sim.max_episode_steps = 3
     eng = HuntBatchEngine(minimal_cfg, num_envs=1)

@@ -183,6 +183,8 @@ class MultiAgentPPOTrainer:
         act_buf = np.zeros((num_steps, e, n, 2), dtype=np.float32)  # 高斯采样原始动作（未裁剪），与 logp 一致
         logp_buf = np.zeros((num_steps, e, n), dtype=np.float32)
         rew_buf = np.zeros((num_steps, e, n), dtype=np.float32)
+        # 与逐步时刻一致：每步先 `normalize(当前 rms)` 再 `update`，与 val 的 GAE 因果对齐
+        rew_norm_buf = np.zeros((num_steps, e, n), dtype=np.float32)
         val_buf = np.zeros((num_steps + 1, e, n), dtype=np.float32)
         done_buf = np.zeros((num_steps, e), dtype=np.bool_)
 
@@ -214,10 +216,19 @@ class MultiAgentPPOTrainer:
 
             next_obs, rew, term, trunc, _ = self.env.step(actions)
             rew_buf[t] = rew
+            rew_norm_buf[t] = np.asarray(rew, dtype=np.float32, copy=True)
             if self.ppo.normalize_reward and self.nh > 0:
-                self._rew_rms["hunter"].update(rew[:, : self.nh].astype(np.float64))
+                h = rew[:, : self.nh]
+                rew_norm_buf[t, :, : self.nh] = self._rew_rms["hunter"].normalize(
+                    h.astype(np.float32, copy=False)
+                )
+                self._rew_rms["hunter"].update(h.astype(np.float64, copy=False))
             if self.ppo.normalize_reward and self.ne > 0 and not self._use_rule_escaper:
-                self._rew_rms["escaper"].update(rew[:, self.nh :].astype(np.float64))
+                ep = rew[:, self.nh :]
+                rew_norm_buf[t, :, self.nh :] = self._rew_rms["escaper"].normalize(
+                    ep.astype(np.float32, copy=False)
+                )
+                self._rew_rms["escaper"].update(ep.astype(np.float64, copy=False))
             done_buf[t] = np.logical_or(term[:, 0], trunc[:, 0])
             # 单并行：终局后立即 reset，避免在吸收态上继续采样。
             # 多并行：仅当本步所有 env 均终局时整批 reset（否则保留 step 输出；GAE 用 done 掩码）。
@@ -245,6 +256,7 @@ class MultiAgentPPOTrainer:
             "actions": act_buf,
             "logp": logp_buf,
             "rew": rew_buf,
+            "rew_norm": rew_norm_buf,
             "val": val_buf,
             "done": done_buf,
         }
@@ -258,7 +270,10 @@ class MultiAgentPPOTrainer:
         obs = self._obs_for_ppo_replay(obs, agent_idx)
         act = storage["actions"][:, :, agent_idx, :]
         old_logp = storage["logp"][:, :, agent_idx]
-        rew = self._rew_for_gae(storage["rew"][:, :, agent_idx], agent_idx)
+        if self.ppo.normalize_reward and "rew_norm" in storage:
+            rew = storage["rew_norm"][:, :, agent_idx]
+        else:
+            rew = self._rew_for_gae(storage["rew"][:, :, agent_idx], agent_idx)
         val = storage["val"][:, :, agent_idx]
         done = storage["done"]
 

@@ -28,6 +28,15 @@ def denorm_action_from_unit_box(
     return action_low + 0.5 * (a_unit + 1.0) * (action_high - action_low)
 
 
+def env_action_to_unit_box(
+    a_env: torch.Tensor,
+    action_low: torch.Tensor,
+    action_high: torch.Tensor,
+) -> torch.Tensor:
+    """与 `denorm_action_from_unit_box` 互逆：将环境动作量映射为 [-1,1] 上各维 a_unit。"""
+    return 2.0 * (a_env - action_low) / (action_high - action_low) - 1.0
+
+
 class ActorCritic(nn.Module):
     """
     对角高斯策略 + 价值头。

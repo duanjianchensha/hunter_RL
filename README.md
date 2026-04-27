@@ -51,6 +51,18 @@ pip install -e ".[rl]"
 python scripts/train_hunter_ppo_rule_escaper.py --time-sec 600
 ```
 
+## 猎人规则预训练（大并行 / 与主训练分离存盘）
+
+规则示教下 BC + 价值（GAE），默认写入 `pretrained/hunter_rule/hunter.pt`（`*.pt` 已被忽略，不污染对比实验的 PPO 保存路径）：
+
+```powershell
+pip install -e ".[rl]"
+python scripts/pretrain_hunter_rule.py --config configs/default.yaml --out-dir pretrained/hunter_rule --num-envs 32 --total-env-steps 2000000
+```
+
+主训练仅从该文件**读取**热启动，保存仍用你指定的 `--save`：  
+`python scripts/train_ppo.py --config configs/default.yaml --init-hunter pretrained/hunter_rule/hunter.pt --save runs/ppo_finetune.pt …`
+
 ## 测试
 
 ```powershell

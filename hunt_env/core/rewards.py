@@ -33,7 +33,17 @@ def compute_step_rewards(
     rw[:, nh:] += rc.escaper_caught_penalty * just_caught.astype(np.float64)
 
     if rc.hunter_approach_shaping_scale != 0.0 and min_hunter_dist_prev is not None:
-        delta = min_hunter_dist_prev - min_hunter_dist_now
+        dp = np.asarray(min_hunter_dist_prev, dtype=np.float64)
+        dn = np.asarray(min_hunter_dist_now, dtype=np.float64)
+        # 仅对步初、步末均存活的逃脱者计接近差；引擎侧用有限大占位，避免 inf/inf 或 inf 运算污染奖励
+        valid = (
+            escaper_alive_prev
+            & escaper_alive_now
+            & np.isfinite(dp)
+            & np.isfinite(dn)
+        )
+        delta = np.zeros_like(dp, dtype=np.float64)
+        np.subtract(dp, dn, out=delta, where=valid)
         sh = rc.hunter_approach_shaping_scale * delta * escaper_alive_now.astype(np.float64)
         s = np.sum(sh, axis=-1) / max(nh, 1)
         rw[:, :nh] += s[:, None]

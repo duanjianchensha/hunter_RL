@@ -127,7 +127,7 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 
 - **猎人（每步）**：`hunter_step` 常数加在每猎人上；有逃脱者在本步**新被捕获**时，每名猎人得 `hunter_capture * n_new`（`n_new` 为本步新捕获人数）。
 - **逃脱者（每步）**：`escaper_caught_penalty` 施加在刚被捕获者上；`escaper_step` 与 `escaper_survive` 对仍存活逃脱者每步加（后者可理解为生存 shaping）。
-- **接近 shaping（猎人）**：若 `hunter_approach_shaping_scale != 0`，用「全逃脱者到最近猎人距离」的减少量对猎人做分滩 shaping（需上一步/本步距离张量，见 `engine.step` 调用处）。
+- **接近 shaping（猎人）**：若 `hunter_approach_shaping_scale != 0`，用「仍存活逃脱者到最近猎人距离」的减少量对猎人做分滩 shaping；仅当步初/步末该逃脱者均存活时作差，且引擎对无效槽用**有限大**占位距离（不用 `inf`），避免 `inf`/`nan` 进入奖励与 RL 价值学习。
 - **终局一次性**：`hunter_win` 在 `just_all_caught` 时加在每名猎人上；`escaper_all_caught_penalty` 在全体逃脱者被消灭时加在每名逃脱者上（用于惩罚全灭）。
 
 实现上 `escaper` 的 step 类奖励会乘 `escaper_alive` 掩码，避免已捕获者仍拿 step/survive 正奖励（见 `engine` 中传入的 `escaper_alive_now`）。
@@ -222,6 +222,12 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 
 - 观测维相同、动作维为 2；猎人与逃脱者**边界不同**时通过 `action_bounds_from_cfg` 在 `act` 内做仿射映射（见 11.1）；规则策略直接输出环境动作空间量。
 
+### 11.5 猎人规则预训练（`pretrain_hunter.py` + `scripts/pretrain_hunter_rule.py`）
+
+- **示教**：环境中猎人动作为 `rule_action_hunter`、逃脱者为 `rule_action_escaper`；多环境并行 `step` 采集。
+- **BC**：对规则给出的环境动作做逆仿射到 `[-1,1]²` 得 `a_n`，**MSE(μ(s), a_n)** 监督 `ActorCritic` 的均值头（与 PPO 中 raw 的常用中心一致）。
+- **价值**：以当前网络对 `V(s)、V(s')` 的估计与**规约后**逐猎人奖励，用**同一** `compute_gae` 得回报 `ret`，**MSE(V(s), ret)**；观测/奖励规约与 PPO 默认（`HunterPretrainConfig`）可对齐，便于 `save_hunter_pretrain` 与后续 `MultiAgentPPOTrainer` 共享 `hunter` 的 `state_dict` 与 `obs_rms` / `rew_rms` 键。
+
 ---
 
 ## 12. 脚本入口
@@ -230,7 +236,8 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 |------|------|
 | `scripts/human_play.py` | 键盘控制**一名**智能体（W/S 线加减速，A/D 角速度，Q 切换智能体），其余发零动作；`render_mode=human` |
 | `scripts/viz_rule_baseline.py` | 规则策略：用当步 `obs` 字典（`build_rule_actions_dict`）驱动，不读 `engine` 真值；若干局可视化 |
-| `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device` 等 |
+| `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device`、可选 `--init-hunter` 热启动猎人 |
+| `scripts/pretrain_hunter_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC（策略均值）+ GAE 价值** 预训练猎人；权重写入独立目录（如 `pretrained/hunter_rule/hunter.pt`），与主训练保存分离 |
 | `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper` 作用于与 PPO **相同** `obs` 张量；短训验证管线 |
 
 **人类试玩**与真实训练差异：试玩中未控制者动作为零；训练使用 RL 策略或 `escaper_mode=rule` 下与网络**同 obs** 的规则逃脱者。

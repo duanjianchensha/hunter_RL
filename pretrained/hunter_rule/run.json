@@ -1,0 +1,26 @@
+{
+  "script": "pretrain_hunter_rule.py",
+  "started_utc": "2026-04-26T15:19:21.839975+00:00",
+  "args": {
+    "config": "configs/default.yaml",
+    "out_dir": "pretrained/hunter_rule",
+    "total_env_steps": 50000000,
+    "rollout_len": 1024,
+    "num_envs": 32,
+    "seed": 0,
+    "device": "auto",
+    "lr": 0.0003,
+    "update_epochs": 8,
+    "num_minibatches": 4,
+    "bc_coef": 1.0,
+    "vf_coef": 0.5,
+    "log_std_reg": 0.0,
+    "no_norm_obs": false,
+    "no_norm_rew": false,
+    "print_every": 10
+  },
+  "env_steps_per_update": 32768,
+  "finished_utc": "2026-04-26T16:41:35.751722+00:00",
+  "total_env_steps": 50003968,
+  "hunter_pt": "D:\\Games\\RenGongZhiNeng\\hunter\\pretrained\\hunter_rule\\hunter.pt"
+}

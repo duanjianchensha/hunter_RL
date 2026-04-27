@@ -19,6 +19,18 @@ def test_terminal_only_on_just_won(minimal_cfg) -> None:
     assert r1[0, nh] < 0  # 逃脱者惩罚
 
 
+def test_approach_shaping_finite_when_dead_or_placeholder(minimal_cfg) -> None:
+    """死槽或占位大距离下塑形仍为有限；步初步末无存活则不求差分。"""
+    minimal_cfg.rewards.hunter_approach_shaping_scale = 0.1
+    e, ne = 1, minimal_cfg.agents.n_escapers
+    prev = np.zeros((e, ne), dtype=bool)
+    now = np.zeros((e, ne), dtype=bool)
+    dp = np.full((e, ne), 1.0e6)
+    dn = np.full((e, ne), 1.0e6)
+    rew, _ = compute_step_rewards(minimal_cfg, prev, now, dp, dn)
+    assert np.all(np.isfinite(rew))
+
+
 def test_step_capture_reward(minimal_cfg) -> None:
     e, ne = 1, minimal_cfg.agents.n_escapers
     prev = np.ones((e, ne), dtype=bool)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -12,6 +13,14 @@ from hunt_env.core.observation import assert_obs_dim, build_observations_batch
 from hunt_env.core.rewards import compute_step_rewards, compute_terminal_rewards
 from hunt_env.core.state import agent_names
 from hunt_env.core.visibility import visible_pair_mask
+
+
+def _far_dist(cfg: HuntEnvConfig) -> float:
+    """
+    大于地图上任意两点的最大可能距离，用于「无此槽/已死逃脱者」占位，避免在奖励等处出现 inf。
+    """
+    w, h = cfg.world.width, cfg.world.height
+    return float(1.0 + 4.0 * math.hypot(w, h))
 
 
 def _min_hunter_escaper_dist(pos: np.ndarray, nh: int) -> np.ndarray:
@@ -25,11 +34,12 @@ def _min_hunter_escaper_dist(pos: np.ndarray, nh: int) -> np.ndarray:
 
 
 def _pairwise_min_dist(pos_row: np.ndarray) -> float:
-    """单行 (N,2) 位置两两最小距离。"""
+    """单行 (N,2) 位置两两最小距离；无对可比较时返回有限大，避免用 inf 参与后续比较。"""
     n = pos_row.shape[0]
+    _big = 1.0e12
     if n < 2:
-        return np.inf
-    dmin = np.inf
+        return _big
+    dmin = _big
     for i in range(n):
         for j in range(i + 1, n):
             d = float(np.linalg.norm(pos_row[i] - pos_row[j]))
@@ -171,11 +181,12 @@ class HuntBatchEngine:
         e = self.num_envs
 
         escaper_alive_prev = self.active[:, nh:].copy()
+        far = _far_dist(cfg)
 
         min_prev = self._min_hunter_dist_prev
         if min_prev is None:
             min_prev = _min_hunter_escaper_dist(self.pos, nh)
-            min_prev = np.where(escaper_alive_prev, min_prev, np.inf)
+        min_prev = np.where(escaper_alive_prev, min_prev, far)
 
         a_cmd = actions[..., 0]
         w_cmd = actions[..., 1]
@@ -200,7 +211,7 @@ class HuntBatchEngine:
         self.prev_omega = np.where(self.active, w_cmd, self.prev_omega)
 
         min_now = _min_hunter_escaper_dist(self.pos, nh)
-        min_now = np.where(escaper_alive_prev, min_now, np.inf)
+        min_now = np.where(escaper_alive_prev, min_now, far)
 
         # 捕获：仅仍存活的逃脱者
         cap_r = cfg.capture.capture_radius
@@ -220,7 +231,7 @@ class HuntBatchEngine:
             escaper_alive_prev,
             escaper_alive_now,
             min_prev if cfg.rewards.hunter_approach_shaping_scale != 0.0 else None,
-            np.where(escaper_alive_prev, min_now, np.inf),
+            np.where(escaper_alive_prev, min_now, far),
         )
 
         self._min_hunter_dist_prev = _min_hunter_escaper_dist(self.pos, nh)

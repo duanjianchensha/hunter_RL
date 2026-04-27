@@ -36,6 +36,12 @@ def main() -> None:
     p.add_argument("--save", type=str, default=None, help="checkpoint 保存路径（.pt）")
     p.add_argument("--save-every", type=int, default=50_000, help="每隔多少环境步保存一次")
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument(
+        "--init-hunter",
+        type=str,
+        default=None,
+        help="从预训练等 checkpoint 只加载 policies['hunter'] 与 obs/rew 统计（若存在键），不覆盖你指定的 --save 以外文件",
+    )
     args = p.parse_args()
 
     if args.device == "auto":
@@ -62,6 +68,23 @@ def main() -> None:
     env = HuntVectorizedEnv.from_yaml(args.config, num_envs=args.num_envs)
     ppo_cfg = PPOConfig(lr=args.lr)
     trainer = MultiAgentPPOTrainer(env.cfg, env, ppo_cfg=ppo_cfg, device=device)
+
+    if args.init_hunter:
+        path_h = Path(args.init_hunter)
+        try:
+            ck = torch.load(path_h, map_location="cpu", weights_only=False)
+        except TypeError:
+            ck = torch.load(path_h, map_location="cpu")
+        sds = ck.get("state_dicts") or {}
+        if "hunter" in sds and "hunter" in trainer.policies:
+            trainer.policies["hunter"].load_state_dict(sds["hunter"])
+        orms = ck.get("obs_rms")
+        if isinstance(orms, dict) and "hunter" in orms and "hunter" in trainer._obs_rms:
+            trainer._obs_rms["hunter"].set_state(orms["hunter"])
+        rr = ck.get("rew_rms")
+        if isinstance(rr, dict) and "hunter" in rr and "hunter" in trainer._rew_rms:
+            trainer._rew_rms["hunter"].set_state(rr["hunter"])
+        print(f"已从 {path_h} 热启动猎人（网络与 RMS，若存在）")
 
     obs = env.reset(seed=args.seed)
     total = 0
