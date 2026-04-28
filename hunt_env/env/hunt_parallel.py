@@ -119,14 +119,17 @@ class HuntParallelEnv(ParallelEnv):
     def _split_obs(self, obs_b: np.ndarray) -> dict[str, np.ndarray]:
         return {a: obs_b[0, i].copy() for i, a in enumerate(self.possible_agents)}
 
-    def render(self) -> np.ndarray | None:
+    def render(self, *, rgb: bool = False) -> np.ndarray | None:
+        """
+        :param rgb: 为 True 时在 human 模式下也返回一帧 RGB（H,W,3），便于录屏；rgb_array 模式始终返回帧。
+        """
         if self.render_mode is None:
             return None
         from hunt_env.render.pygame_backend import PygameHuntRenderer
 
         if self._renderer is None:
             self._renderer = PygameHuntRenderer(self._cfg)
-        return_rgb = self.render_mode == "rgb_array"
+        return_rgb = self.render_mode == "rgb_array" or rgb
         return self._renderer.render(self._engine, env_index=0, return_rgb=return_rgb)
 
     @property

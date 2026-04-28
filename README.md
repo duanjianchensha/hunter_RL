@@ -23,7 +23,8 @@ cd <你的项目根目录>
 pip install -e ".[dev]"
 ```
 
-需要训练（PPO）时再安装 PyTorch 可选依赖：`pip install -e ".[rl]"`。
+需要训练（PPO）时再安装 PyTorch 可选依赖：`pip install -e ".[rl]"`。  
+可视化脚本录制 MP4（`imageio` + `imageio-ffmpeg`）：`pip install -e ".[viz]"`；若同时训练可写 `pip install -e ".[rl,viz]"`。
 
 程序化覆盖 YAML 片段请使用 `load_config(merge={"sim": {"max_episode_steps": 500}})`，勿写成 `load_config(overrides=...)`（会与 `**kwargs` 语义冲突）。
 

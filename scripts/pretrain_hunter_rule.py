@@ -10,11 +10,13 @@
 
   pip install -e ".[rl]"
   python scripts/pretrain_hunter_rule.py --config configs/default.yaml --out-dir pretrained/hunter_rule
+  python scripts/pretrain_hunter_rule.py ... --log-file pretrained/hunter_rule/train.log
 """
 
 from __future__ import annotations
 
 import argparse
+from argparse import Namespace
 import json
 import random
 import sys
@@ -66,8 +68,21 @@ def main() -> None:
         "--no-norm-rew", action="store_true", help="关闭 GAE 前奖励标量方差规约"
     )
     p.add_argument("--print-every", type=int, default=10, help="每多少次更新打印一行")
+    p.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="若指定路径，将 stdout/stderr 同步写入该日志文件（UTF-8）",
+    )
     args = p.parse_args()
 
+    from hunt_rl.train_log import tee_stdout_stderr
+
+    with tee_stdout_stderr(args.log_file):
+        _pretrain_hunter_rule_run(args)
+
+
+def _pretrain_hunter_rule_run(args: Namespace) -> None:
     if args.device == "auto":
         device = get_train_device(prefer_cuda=True)
     elif args.device == "cuda":

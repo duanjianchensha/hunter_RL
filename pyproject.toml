@@ -20,6 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
 rl = ["torch>=2.1"]
+# 可视化脚本录制 MP4（imageio-ffmpeg 自带 ffmpeg 二进制）
+viz = ["imageio>=2.31", "imageio-ffmpeg>=0.4"]
 
 [tool.setuptools.packages.find]
 where = ["."]

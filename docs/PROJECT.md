@@ -235,10 +235,11 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 | 脚本 | 作用 |
 |------|------|
 | `scripts/human_play.py` | 键盘控制**一名**智能体（W/S 线加减速，A/D 角速度，Q 切换智能体），其余发零动作；`render_mode=human` |
-| `scripts/viz_rule_baseline.py` | 规则策略：用当步 `obs` 字典（`build_rule_actions_dict`）驱动，不读 `engine` 真值；若干局可视化 |
-| `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device`、可选 `--init-hunter` 热启动猎人 |
-| `scripts/pretrain_hunter_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC（策略均值）+ GAE 价值** 预训练猎人；权重写入独立目录（如 `pretrained/hunter_rule/hunter.pt`），与主训练保存分离 |
-| `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper` 作用于与 PPO **相同** `obs` 张量；短训验证管线 |
+| `scripts/viz_rule_baseline.py` | 规则策略：用当步 `obs` 字典（`build_rule_actions_dict`）驱动，不读 `engine` 真值；`--max-episodes` 控制自动退出局数（默认 3，≤0 不限）；可选 `--record-mp4` |
+| `scripts/viz_hunter_policy.py` | 从 checkpoint 加载猎人策略 + 规则逃脱者同场可视化；同上 `--max-episodes`；可选 `--record-mp4`、`--record-max-frames`；`HuntParallelEnv.render(rgb=True)` 在 human 模式下额外返回 RGB 帧供编码 |
+| `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device`、可选 `--init-hunter`；可选 `--log-file` 将控制台日志同步写入 UTF-8 文件 |
+| `scripts/pretrain_hunter_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC（策略均值）+ GAE 价值** 预训练猎人；权重写入独立目录；可选 `--log-file` |
+| `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper`；可选 `--log-file` |
 
 **人类试玩**与真实训练差异：试玩中未控制者动作为零；训练使用 RL 策略或 `escaper_mode=rule` 下与网络**同 obs** 的规则逃脱者。
 

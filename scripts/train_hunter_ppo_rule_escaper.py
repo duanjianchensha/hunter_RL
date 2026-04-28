@@ -5,11 +5,16 @@
 
   pip install -e ".[rl]"
   python scripts/train_hunter_ppo_rule_escaper.py --time-sec 600
+
+预训练热启（与 `pretrain_hunter_rule.py` 同结构，隐层 256×256）：
+
+  python scripts/train_hunter_ppo_rule_escaper.py --init-hunter pretrained/hunter_rule/hunter.pt --save runs/hunter_rl.pt --time-sec 3600
 """
 
 from __future__ import annotations
 
 import argparse
+from argparse import Namespace
 import random
 import sys
 import time
@@ -50,8 +55,27 @@ def main() -> None:
     p.add_argument("--update-epochs", type=int, default=4)
     p.add_argument("--num-minibatches", type=int, default=4)
     p.add_argument("--save", type=str, default=None, help="结束时可保存 .pt 检查点")
+    p.add_argument(
+        "--init-hunter",
+        type=str,
+        default=None,
+        help="从预训练/PPO checkpoint 加载 policies['hunter'] 与 obs/rew 统计（若存在）；隐层自动用 256×256 与预训练对齐",
+    )
+    p.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="若指定路径，将 stdout/stderr 同步写入该日志文件（UTF-8）",
+    )
     args = p.parse_args()
 
+    from hunt_rl.train_log import tee_stdout_stderr
+
+    with tee_stdout_stderr(args.log_file):
+        _train_hunter_rule_escaper_run(args)
+
+
+def _train_hunter_rule_escaper_run(args: Namespace) -> None:
     if args.device == "auto":
         device = get_train_device(prefer_cuda=True)
     elif args.device == "cuda":
@@ -83,15 +107,35 @@ def main() -> None:
         update_epochs=args.update_epochs,
         num_minibatches=args.num_minibatches,
     )
-    # 小网络，CPU 上几十秒内能跑多轮
+    # 无热启：小网络便于本机快速冒烟；有 --init-hunter 时需与预训练 ActorCritic 结构一致（默认 256×256）
+    hidden = (256, 256) if args.init_hunter else (128, 128)
     trainer = MultiAgentPPOTrainer(
         env.cfg,
         env,
         ppo_cfg=ppo_cfg,
-        hidden_sizes=(128, 128),
+        hidden_sizes=hidden,
         device=device,
         escaper_mode="rule",
     )
+
+    if args.init_hunter:
+        import torch
+
+        path_h = Path(args.init_hunter)
+        try:
+            ck = torch.load(path_h, map_location="cpu", weights_only=False)
+        except TypeError:
+            ck = torch.load(path_h, map_location="cpu")
+        sds = ck.get("state_dicts") or {}
+        if "hunter" in sds and "hunter" in trainer.policies:
+            trainer.policies["hunter"].load_state_dict(sds["hunter"])
+        orms = ck.get("obs_rms")
+        if isinstance(orms, dict) and "hunter" in orms and "hunter" in trainer._obs_rms:
+            trainer._obs_rms["hunter"].set_state(orms["hunter"])
+        rr = ck.get("rew_rms")
+        if isinstance(rr, dict) and "hunter" in rr and "hunter" in trainer._rew_rms:
+            trainer._rew_rms["hunter"].set_state(rr["hunter"])
+        print(f"已从 {path_h} 热启动猎人（网络与 RMS，若存在）")
 
     obs = env.reset(seed=args.seed)
     t0 = time.perf_counter()
@@ -100,8 +144,10 @@ def main() -> None:
 
     print(
         f"开始：device={device}，时间预算={args.time_sec}s，"
-        f"rollout={args.rollout_len}，num_envs={env.num_envs}，"
-        f"escaper=rule，只更新猎人 PPO。",
+        f"rollout={args.rollout_len}，num_envs={env.num_envs}，hidden={hidden}，"
+        f"escaper=rule，只更新猎人 PPO"
+        + (f"，init={args.init_hunter}" if args.init_hunter else "")
+        + "。",
     )
 
     while time.perf_counter() - t0 < args.time_sec:

@@ -2,6 +2,12 @@
 加载预训练 / PPO checkpoint 中的猎人网络，在 `human` 窗口中可视化其策略；逃脱者默认同预训练，用 `rule_action_escaper`。
 
 与 `viz_rule_baseline.py` 同观测、同窗口交互（ESC/关闭退出）；便于肉眼对比“学到的猎人”与规则猎人。
+
+录制 MP4（需 `pip install -e ".[viz]"` 或 `imageio` + `imageio-ffmpeg`）：
+
+  python scripts/viz_hunter_policy.py --checkpoint path/to/hunter.pt --record-mp4 runs/demo.mp4
+  python scripts/viz_hunter_policy.py --checkpoint path/to/hunter.pt --max-episodes 10
+  python scripts/viz_hunter_policy.py --checkpoint path/to/hunter.pt --max-episodes 0
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from hunt_env.config.loader import load_config
 from hunt_env.config.schema import HuntEnvConfig
 from hunt_env.env.hunt_parallel import HuntParallelEnv
 from hunt_env.policies.rules import rule_action_escaper
+from hunt_env.render.mp4 import Mp4Recorder
 from hunt_rl.actor_critic import ActorCritic, action_bounds_from_cfg
 from hunt_rl.device import get_train_device
 from hunt_rl.running_stats import RunningMeanStd
@@ -79,7 +86,12 @@ def main() -> None:
         help="仅当 checkpoint 无 cfg 时必需；有 cfg 时一般不需要",
     )
     p.add_argument("--seed", type=int, default=None, help="首局 reset 种子；后续局为随机")
-    p.add_argument("--max-episodes", type=int, default=3, help="自动进行的局数")
+    p.add_argument(
+        "--max-episodes",
+        type=int,
+        default=3,
+        help="跑满多少局后自动退出；≤0 表示不限局数，仅 ESC/关窗结束",
+    )
     p.add_argument(
         "--stochastic",
         action="store_true",
@@ -97,6 +109,18 @@ def main() -> None:
         type=float,
         default=10.0,
         help="与 HunterPretrainConfig.obs_clip 对齐；归一化 obs 的 clip 范围",
+    )
+    p.add_argument(
+        "--record-mp4",
+        type=str,
+        default=None,
+        help="若指定输出路径则录制窗口画面为 MP4（帧率同配置 render.fps）",
+    )
+    p.add_argument(
+        "--record-max-frames",
+        type=int,
+        default=None,
+        help="最多写入帧数；达到后停止写入但可继续交互，直至退出",
     )
     args = p.parse_args()
 
@@ -171,47 +195,75 @@ def main() -> None:
             f"配置观测维 {o_dim_env} 与网络输入维 {obs_dim} 不一致，请用训练时同一份 config/checkpoint。"
         )
 
+    recorder: Mp4Recorder | None = None
+    if args.record_mp4:
+        recorder = Mp4Recorder(args.record_mp4, cfg.render.fps)
+        print(f"录制 MP4 → {args.record_mp4}，fps={cfg.render.fps}")
+    rec_cap = args.record_max_frames
+
     import pygame
 
     pygame.init()
     clock = pygame.time.Clock()
 
-    print(f"已加载: {path}  device={device}  确定性均值={'否' if args.stochastic else '是'}")
-    print("逃脱者: rule_action_escaper（与预训练/规则对照一致）。按 ESC 或关闭窗口退出。")
+    def _render_viz() -> None:
+        nonlocal recorder
+        use_rgb = recorder is not None
+        fr = env.render(rgb=use_rgb)
+        if recorder is not None and fr is not None:
+            recorder.append(fr)
+            if rec_cap is not None and recorder.frame_count >= rec_cap:
+                n = recorder.frame_count
+                recorder.close()
+                recorder = None
+                print(f"已达 --record-max-frames={rec_cap}，已写入 {n} 帧，停止录屏（可继续操作窗口）")
 
-    ob, infos = env.reset(seed=args.seed)
-    session = 1
-    print(f"--- 第 {session} 局 ---")
-    env.render()
+    try:
+        print(f"已加载: {path}  device={device}  确定性均值={'否' if args.stochastic else '是'}")
+        _lim = f"{args.max_episodes} 局" if args.max_episodes > 0 else "不限局数"
+        print(
+            f"逃脱者: rule_action_escaper（与预训练/规则对照一致）。"
+            f"局数上限: {_lim}（可用 --max-episodes 调整）。按 ESC 或关闭窗口退出。"
+        )
 
-    running = True
-    while running:
-        if not env.agents:
-            session += 1
-            if session > args.max_episodes:
-                break
-            ob, infos = env.reset(seed=None)
-            print(f"--- 第 {session} 局 ---")
-            env.render()
+        ob, infos = env.reset(seed=args.seed)
+        session = 1
+        print(f"--- 第 {session} 局 ---")
+        _render_viz()
 
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:
-                running = False
-            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                running = False
+        running = True
+        while running:
+            if not env.agents:
+                session += 1
+                if args.max_episodes > 0 and session > args.max_episodes:
+                    break
+                ob, infos = env.reset(seed=None)
+                print(f"--- 第 {session} 局 ---")
+                _render_viz()
 
-        actions = build_actions({a: ob[a] for a in ob}, env.possible_agents)
-        ob, rews, terms, truncs, infos = env.step(actions)
-        env.render()
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    running = False
+                if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
+                    running = False
 
-        if any(terms.values()) or any(truncs.values()):
-            reason = "全捕获" if any(terms.values()) else "超时"
-            print(f"局结束：{reason}，示例奖励 hunter_0={rews.get('hunter_0', 0):.2f}")
+            actions = build_actions({a: ob[a] for a in ob}, env.possible_agents)
+            ob, rews, terms, truncs, infos = env.step(actions)
+            _render_viz()
 
-        clock.tick(cfg.render.fps)
+            if any(terms.values()) or any(truncs.values()):
+                reason = "全捕获" if any(terms.values()) else "超时"
+                print(f"局结束：{reason}，示例奖励 hunter_0={rews.get('hunter_0', 0):.2f}")
 
-    env.close()
-    pygame.quit()
+            clock.tick(cfg.render.fps)
+    finally:
+        if recorder is not None:
+            n = recorder.frame_count
+            path_mp4 = recorder.path
+            recorder.close()
+            print(f"已保存 MP4：{path_mp4}（{n} 帧）")
+        env.close()
+        pygame.quit()
     sys.exit(0)
 
 
