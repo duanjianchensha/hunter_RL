@@ -14,13 +14,14 @@ world:
 agents:
   n_hunters: 1
   n_escapers: 1
+  # 1v1 规则对规则胜率校准：略强化猎人追击与判定，略压低逃脱者直线优势
   hunter_limits:
-    max_speed: 4.0
-    max_accel: 4.0
-    max_omega: 4.5
+    max_speed: 5.2275
+    max_accel: 4.75
+    max_omega: 5.2
   escaper_limits:
-    max_speed: 5.0
-    max_accel: 4.0
+    max_speed: 4.45
+    max_accel: 3.7
     max_omega: 3.0
   spawn:
     mode: uniform
@@ -28,13 +29,16 @@ agents:
 
 visibility:
   view_radius: 6.0
+  # 猎人略大于逃脱者（先发现）；与速度差配合做规则对规则 1v1 胜率校准
+  hunter_view_radius: 7.0
+  escaper_view_radius: 6.95
   use_sector_fov: false
   fov_deg: null
   # 1v1 时槽位可少；若改回多智能体可再增大
   k_visible: 4
 
 capture:
-  capture_radius: 0.75
+  capture_radius: 0.91
   remove_captured: true
 
 observation:
@@ -48,6 +52,7 @@ rewards:
   hunter_capture: 10.0
   hunter_win: 50.0
   hunter_approach_shaping_scale: 0.1
+  escaper_flee_shaping_scale: 0.1
   escaper_step: 0.0
   escaper_survive: 0.01
   escaper_caught_penalty: -10.0

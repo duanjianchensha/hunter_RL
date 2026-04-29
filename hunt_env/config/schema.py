@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -65,7 +66,18 @@ class AgentsConfig(BaseModel):
 class VisibilityConfig(BaseModel):
     """逐智能体独立视野，无队伍融合。"""
 
-    view_radius: float = Field(gt=0)
+    view_radius: float = Field(
+        gt=0,
+        description="默认视野半径；未单独指定 hunter_view_radius / escaper_view_radius 时双方均用此值",
+    )
+    hunter_view_radius: float | None = Field(
+        default=None,
+        description="猎人索引所用距离圆半径；None 则用 view_radius",
+    )
+    escaper_view_radius: float | None = Field(
+        default=None,
+        description="逃脱者索引所用距离圆半径；None 则用 view_radius",
+    )
     use_sector_fov: bool = False
     fov_deg: float | None = Field(
         default=None,
@@ -74,6 +86,25 @@ class VisibilityConfig(BaseModel):
         description="扇形半角（度），从朝向左右各一半；全圆为 360 或不用扇形",
     )
     k_visible: int = Field(ge=1, description="Top-K 其他智能体槽位")
+
+    @model_validator(mode="after")
+    def _role_view_radii_positive(self) -> VisibilityConfig:
+        for name, v in (
+            ("hunter_view_radius", self.hunter_view_radius),
+            ("escaper_view_radius", self.escaper_view_radius),
+        ):
+            if v is not None and v <= 0:
+                raise ValueError(f"{name} 必须 > 0")
+        return self
+
+    def radii_per_observer(self, n_hunters: int, n_agents: int) -> np.ndarray:
+        """每名观察者 i 的距离阈值 (N,)，与 visible_pair_mask 一致。"""
+        vh = float(self.hunter_view_radius) if self.hunter_view_radius is not None else float(self.view_radius)
+        ve = float(self.escaper_view_radius) if self.escaper_view_radius is not None else float(self.view_radius)
+        r = np.empty(n_agents, dtype=np.float64)
+        r[:n_hunters] = vh
+        r[n_hunters:] = ve
+        return r
 
 
 class CaptureConfig(BaseModel):
@@ -105,6 +136,8 @@ class RewardsConfig(BaseModel):
     hunter_capture: float = 1.0
     hunter_win: float = 1.0
     hunter_approach_shaping_scale: float = 0.0
+    # 与猎人接近 shaping 对称：本步「到最近猎人距离」相对上步增加量为正（拉远有奖）
+    escaper_flee_shaping_scale: float = 0.0
     escaper_step: float = 0.0
     escaper_survive: float = 0.0
     escaper_caught_penalty: float = -1.0

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-仅训练猎人，逃脱者用规则策略 `rule_action_escaper(当前步 obs, cfg)`（与 PPO
-分支读取同一 `obs` 张量，非引擎真值）——用于在 ~10 分钟内观察 loss 与奖励是否正常变化。
+仅训练猎人，逃脱者用规则策略 `rule_action_escaper(obs, cfg)`（与 RL 同一观测）。
+
+默认使用 `configs/default.yaml`（单局步数、并行 env 数以 YAML 为准）。
 
   pip install -e ".[rl]"
-  python scripts/train_hunter_ppo_rule_escaper.py --time-sec 600
+  python scripts/train_hunter_ppo_rule_escaper.py --save runs/hunter_rl.pt --time-sec 600
 
-预训练热启（与 `pretrain_hunter_rule.py` 同结构，隐层 256×256）：
+预训练热启（隐层 256×256）：
 
   python scripts/train_hunter_ppo_rule_escaper.py --init-hunter pretrained/hunter_rule/hunter.pt --save runs/hunter_rl.pt --time-sec 3600
 """
@@ -26,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
+from hunt_env.cli_defaults import DEFAULT_CONFIG_YAML, train_env_merge
 from hunt_env.config.loader import load_config
 from hunt_env.env.vectorized import HuntVectorizedEnv
 from hunt_rl.device import get_train_device
@@ -33,8 +35,8 @@ from hunt_rl.trainer import MultiAgentPPOTrainer, PPOConfig
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="猎人 PPO + 规则逃脱者（短训验证）")
-    p.add_argument("--config", type=str, default="configs/default.yaml", help="基础 YAML 配置")
+    p = argparse.ArgumentParser(description="猎人 PPO + 规则逃脱者")
+    p.add_argument("--config", type=str, default=DEFAULT_CONFIG_YAML, help="YAML（默认 configs/default.yaml）")
     p.add_argument(
         "--time-sec",
         type=float,
@@ -47,8 +49,18 @@ def main() -> None:
         default=256,
         help="每轮 PPO 更新前采集的步数",
     )
-    p.add_argument("--max-episode-steps", type=int, default=200, help="单局步数（覆盖配置，短局加快 reset）")
-    p.add_argument("--num-envs", type=int, default=4, help="并行环境数，提高吞吐")
+    p.add_argument(
+        "--max-episode-steps",
+        type=int,
+        default=None,
+        help="覆盖 YAML 中单局最大步数；默认沿用配置文件（一般为 1000）",
+    )
+    p.add_argument(
+        "--num-envs",
+        type=int,
+        default=None,
+        help="并行环境数；默认沿用 YAML 的 vectorization.num_envs",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--lr", type=float, default=3e-4)
@@ -96,10 +108,8 @@ def _train_hunter_rule_escaper_run(args: Namespace) -> None:
     except ImportError as e:
         raise SystemExit("需要安装 PyTorch：pip install -e \".[rl]\"") from e
 
-    cfg = load_config(
-        args.config,
-        merge={"sim": {"max_episode_steps": args.max_episode_steps}, "vectorization": {"num_envs": args.num_envs}},
-    )
+    merge = train_env_merge(args.max_episode_steps, args.num_envs)
+    cfg = load_config(args.config, merge=merge) if merge else load_config(args.config)
     env = HuntVectorizedEnv(cfg=cfg, num_envs=cfg.vectorization.num_envs)
 
     ppo_cfg = PPOConfig(
@@ -144,7 +154,8 @@ def _train_hunter_rule_escaper_run(args: Namespace) -> None:
 
     print(
         f"开始：device={device}，时间预算={args.time_sec}s，"
-        f"rollout={args.rollout_len}，num_envs={env.num_envs}，hidden={hidden}，"
+        f"rollout={args.rollout_len}，num_envs={env.num_envs}，"
+        f"sim.max_episode_steps={cfg.sim.max_episode_steps}，hidden={hidden}，"
         f"escaper=rule，只更新猎人 PPO"
         + (f"，init={args.init_hunter}" if args.init_hunter else "")
         + "。",

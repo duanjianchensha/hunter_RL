@@ -48,6 +48,19 @@ def compute_step_rewards(
         s = np.sum(sh, axis=-1) / max(nh, 1)
         rw[:, :nh] += s[:, None]
 
+    if rc.escaper_flee_shaping_scale != 0.0 and min_hunter_dist_prev is not None:
+        dp = np.asarray(min_hunter_dist_prev, dtype=np.float64)
+        dn = np.asarray(min_hunter_dist_now, dtype=np.float64)
+        valid = (
+            escaper_alive_prev
+            & escaper_alive_now
+            & np.isfinite(dp)
+            & np.isfinite(dn)
+        )
+        delta_flee = np.zeros_like(dp, dtype=np.float64)
+        np.subtract(dn, dp, out=delta_flee, where=valid)
+        rw[:, nh:] += rc.escaper_flee_shaping_scale * delta_flee
+
     rw[:, :nh] += rc.hunter_step
     rw[:, nh:] += rc.escaper_step * escaper_alive_now.astype(np.float64)
     rw[:, nh:] += rc.escaper_survive * escaper_alive_now.astype(np.float64)

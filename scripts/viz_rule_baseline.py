@@ -1,9 +1,8 @@
 """
-规则策略可视化：与 RL **同一 `obs` 向量** 输入；猎人/逃脱者用 `build_rule_actions_dict` 从观测算动作。
+规则策略可视化：`build_rule_actions_dict` 驱动，与 RL 同观测。
 
-可见目标仅来自观测中 Top-K 槽位 + `other_is_escaper` 位；不访问引擎真值。
-
-录制 MP4：pip install -e ".[viz]" 后加 --record-mp4 out.mp4
+环境参数完全来自 `--config`（默认 configs/default.yaml）；
+`seed 0`、`max-episodes 10`、默认录制 `runs/viz_rule_baseline.mp4`。关闭录屏：`--no-record-mp4`。
 """
 
 from __future__ import annotations
@@ -11,6 +10,12 @@ from __future__ import annotations
 import argparse
 import sys
 
+from hunt_env.cli_defaults import (
+    DEFAULT_CONFIG_YAML,
+    VIZ_MAX_EPISODES,
+    VIZ_MP4_RULE_BASELINE,
+    VIZ_SEED,
+)
 from hunt_env.config.loader import load_config
 from hunt_env.env.hunt_parallel import HuntParallelEnv
 from hunt_env.policies.rules import build_rule_actions_dict
@@ -19,20 +24,21 @@ from hunt_env.render.mp4 import Mp4Recorder
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="规则基线策略可视化")
-    parser.add_argument("--config", type=str, default=None, help="YAML 配置路径")
-    parser.add_argument("--seed", type=int, default=None, help="reset 随机种子")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_YAML, help="环境参数来源（默认项目 configs/default.yaml）")
+    parser.add_argument("--seed", type=int, default=VIZ_SEED, help="首局 reset 种子")
     parser.add_argument(
         "--max-episodes",
         type=int,
-        default=3,
-        help="跑满多少局后自动退出；≤0 表示不限局数，仅 ESC/关窗结束",
+        default=VIZ_MAX_EPISODES,
+        help="跑满多少局后自动退出；≤0 不限",
     )
     parser.add_argument(
         "--record-mp4",
         type=str,
-        default=None,
-        help="若指定路径则录制为 MP4（帧率同配置 render.fps；需 imageio + imageio-ffmpeg）",
+        default=VIZ_MP4_RULE_BASELINE,
+        help="MP4 路径（默认 runs/viz_rule_baseline.mp4）",
     )
+    parser.add_argument("--no-record-mp4", action="store_true", help="不写 MP4")
     parser.add_argument(
         "--record-max-frames",
         type=int,
@@ -41,13 +47,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    record_mp4_out = None if args.no_record_mp4 else args.record_mp4
+
     cfg = load_config(args.config)
     env = HuntParallelEnv(cfg=cfg, render_mode="human")
 
     recorder: Mp4Recorder | None = None
-    if args.record_mp4:
-        recorder = Mp4Recorder(args.record_mp4, cfg.render.fps)
-        print(f"录制 MP4 → {args.record_mp4}，fps={cfg.render.fps}")
+    if record_mp4_out:
+        recorder = Mp4Recorder(record_mp4_out, cfg.render.fps)
+        print(f"录制 MP4 → {record_mp4_out}，fps={cfg.render.fps}")
     rec_cap = args.record_max_frames
 
     import pygame

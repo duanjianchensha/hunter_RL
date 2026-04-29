@@ -28,6 +28,8 @@ agents:
 
 visibility:
   view_radius: 5.0
+  hunter_view_radius: 5.0
+  escaper_view_radius: 6.0
   use_sector_fov: false
   fov_deg: null
   k_visible: 4
@@ -47,6 +49,7 @@ rewards:
   hunter_capture: 10.0
   hunter_win: 50.0
   hunter_approach_shaping_scale: 0.0
+  escaper_flee_shaping_scale: 0.0
   escaper_step: 0.0
   escaper_survive: 0.02
   escaper_caught_penalty: -10.0

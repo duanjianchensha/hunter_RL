@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
+from hunt_env.cli_defaults import DEFAULT_CONFIG_YAML
 from hunt_env.env.vectorized import HuntVectorizedEnv
 from hunt_rl.device import get_train_device
 from hunt_rl.trainer import MultiAgentPPOTrainer, PPOConfig
@@ -28,7 +29,7 @@ from hunt_rl.trainer import MultiAgentPPOTrainer, PPOConfig
 
 def main() -> None:
     p = argparse.ArgumentParser(description="追猎环境 PPO 训练（PyTorch）")
-    p.add_argument("--config", type=str, default="configs/default.yaml", help="YAML 配置路径")
+    p.add_argument("--config", type=str, default=DEFAULT_CONFIG_YAML, help="YAML 配置路径")
     p.add_argument("--total-steps", type=int, default=100_000, help="目标环境步数（约等于并行 env 数 × rollout 步数 × 更新次数）")
     p.add_argument("--rollout-len", type=int, default=2048, help="每次更新前采集的步数")
     p.add_argument("--num-envs", type=int, default=None, help="并行环境数（默认读配置 vectorization.num_envs）")
@@ -42,6 +43,12 @@ def main() -> None:
         type=str,
         default=None,
         help="从预训练等 checkpoint 只加载 policies['hunter'] 与 obs/rew 统计（若存在键），不覆盖你指定的 --save 以外文件",
+    )
+    p.add_argument(
+        "--init-escaper",
+        type=str,
+        default=None,
+        help="从预训练等 checkpoint 只加载 policies['escaper'] 与 obs/rew 统计（若存在键）",
     )
     p.add_argument(
         "--log-file",
@@ -99,6 +106,23 @@ def _train_ppo_run(args: Namespace) -> None:
         if isinstance(rr, dict) and "hunter" in rr and "hunter" in trainer._rew_rms:
             trainer._rew_rms["hunter"].set_state(rr["hunter"])
         print(f"已从 {path_h} 热启动猎人（网络与 RMS，若存在）")
+
+    if args.init_escaper:
+        path_e = Path(args.init_escaper)
+        try:
+            ck_e = torch.load(path_e, map_location="cpu", weights_only=False)
+        except TypeError:
+            ck_e = torch.load(path_e, map_location="cpu")
+        sds_e = ck_e.get("state_dicts") or {}
+        if "escaper" in sds_e and "escaper" in trainer.policies:
+            trainer.policies["escaper"].load_state_dict(sds_e["escaper"])
+        orms_e = ck_e.get("obs_rms")
+        if isinstance(orms_e, dict) and "escaper" in orms_e and "escaper" in trainer._obs_rms:
+            trainer._obs_rms["escaper"].set_state(orms_e["escaper"])
+        rr_e = ck_e.get("rew_rms")
+        if isinstance(rr_e, dict) and "escaper" in rr_e and "escaper" in trainer._rew_rms:
+            trainer._rew_rms["escaper"].set_state(rr_e["escaper"])
+        print(f"已从 {path_e} 热启动逃脱者（网络与 RMS，若存在）")
 
     obs = env.reset(seed=args.seed)
     total = 0

@@ -67,8 +67,8 @@ class PygameHuntRenderer:
         pos = engine.pos[env_index]
         theta = engine.theta[env_index]
         active = engine.active[env_index]
-        vr = cfg.visibility.view_radius
         n_agents = engine.n_agents
+        view_radii = cfg.visibility.radii_per_observer(nh, n_agents)
 
         # 轨迹长度与引擎智能体数对齐（防御）
         if len(self._trails) != n_agents:
@@ -98,7 +98,7 @@ class PygameHuntRenderer:
                 if not active[i]:
                     continue
                 c = self.world_to_px(pos[i])
-                r_px = int(vr * min(self._sx, self._sy))
+                r_px = int(float(view_radii[i]) * min(self._sx, self._sy))
                 pygame.draw.circle(screen, (40, 55, 70), c, r_px, width=1)
 
         # 智能体

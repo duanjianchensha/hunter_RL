@@ -1,13 +1,11 @@
 """
-加载预训练 / PPO checkpoint 中的猎人网络，在 `human` 窗口中可视化其策略；逃脱者默认同预训练，用 `rule_action_escaper`。
+加载 checkpoint 中的猎人网络可视化；逃脱者用 `rule_action_escaper`。
 
-与 `viz_rule_baseline.py` 同观测、同窗口交互（ESC/关闭退出）；便于肉眼对比“学到的猎人”与规则猎人。
+默认：`configs/default.yaml` 驱动环境（非 checkpoint 内嵌 cfg）；`--seed 0`、`--max-episodes 10`、录制 `runs/viz_hunter_policy.mp4`；
+不加 `--checkpoint` 无法运行（必填）。关闭录屏：`--no-record-mp4`。
 
-录制 MP4（需 `pip install -e ".[viz]"` 或 `imageio` + `imageio-ffmpeg`）：
-
-  python scripts/viz_hunter_policy.py --checkpoint path/to/hunter.pt --record-mp4 runs/demo.mp4
-  python scripts/viz_hunter_policy.py --checkpoint path/to/hunter.pt --max-episodes 10
-  python scripts/viz_hunter_policy.py --checkpoint path/to/hunter.pt --max-episodes 0
+  pip install -e ".[viz]"
+  python scripts/viz_hunter_policy.py --checkpoint runs/hunter_rl.pt
 """
 
 from __future__ import annotations
@@ -23,8 +21,13 @@ if str(ROOT) not in sys.path:
 import numpy as np
 import torch
 
-from hunt_env.config.loader import load_config
-from hunt_env.config.schema import HuntEnvConfig
+from hunt_env.cli_defaults import (
+    DEFAULT_CONFIG_YAML,
+    VIZ_MAX_EPISODES,
+    VIZ_MP4_HUNTER_POLICY,
+    VIZ_SEED,
+    env_cfg_for_viz,
+)
 from hunt_env.env.hunt_parallel import HuntParallelEnv
 from hunt_env.policies.rules import rule_action_escaper
 from hunt_env.render.mp4 import Mp4Recorder
@@ -51,22 +54,35 @@ def _infer_backbone(
     return obs_dim, tuple(hiddens)
 
 
+_CKPT_REJECT_SUFFIXES = frozenset({".log", ".txt", ".md", ".csv", ".json"})
+
+
 def _load_checkpoint(path: Path) -> dict:
+    suf = path.suffix.lower()
+    if suf in _CKPT_REJECT_SUFFIXES:
+        raise SystemExit(
+            f"--checkpoint 指向文本文件 ({path.name})，无法加载权重。\n"
+            "请使用训练保存的 .pt（例如 scripts/train_hunter_ppo_rule_escaper.py 的 --save 路径），"
+            "不要使用 .log 日志。"
+        )
     try:
         return torch.load(path, map_location="cpu", weights_only=False)
     except TypeError:
+        pass
+    except Exception as e:
+        _checkpoint_load_failed(path, e)
+    try:
         return torch.load(path, map_location="cpu")
+    except Exception as e:
+        _checkpoint_load_failed(path, e)
 
 
-def _resolve_cfg(ck: dict, config_path: str | None) -> HuntEnvConfig:
-    raw = ck.get("cfg")
-    if raw is not None:
-        if config_path is not None:
-            print("提示：checkpoint 内已有 cfg，已忽略 --config（需与训练一致时请直接换 checkpoint）。")
-        return HuntEnvConfig.model_validate(raw)
-    if not config_path:
-        raise SystemExit("checkpoint 中无 cfg 字段，请用 --config 指定与训练相同的 YAML。")
-    return load_config(config_path)
+def _checkpoint_load_failed(path: Path, err: BaseException) -> None:
+    raise SystemExit(
+        f"无法用 torch.load 解析权重文件：{path}\n"
+        f"原因：{err}\n"
+        "请确认路径为 PyTorch 保存的 .pt/.pth（含 state_dicts）。"
+    ) from None
 
 
 def main() -> None:
@@ -82,15 +98,21 @@ def main() -> None:
     p.add_argument(
         "--config",
         type=str,
-        default=None,
-        help="仅当 checkpoint 无 cfg 时必需；有 cfg 时一般不需要",
+        default=DEFAULT_CONFIG_YAML,
+        help="环境与观测等均以该 YAML 为准（默认 configs/default.yaml）；与 checkpoint 内嵌 cfg 无关",
     )
-    p.add_argument("--seed", type=int, default=None, help="首局 reset 种子；后续局为随机")
+    p.add_argument(
+        "--max-episode-steps",
+        type=int,
+        default=None,
+        help="覆盖 YAML 中的单局最大步数；默认完全沿用 YAML",
+    )
+    p.add_argument("--seed", type=int, default=VIZ_SEED, help="首局 reset 种子；后续局随机")
     p.add_argument(
         "--max-episodes",
         type=int,
-        default=3,
-        help="跑满多少局后自动退出；≤0 表示不限局数，仅 ESC/关窗结束",
+        default=VIZ_MAX_EPISODES,
+        help="自动退出前运行的局数；≤0 不限",
     )
     p.add_argument(
         "--stochastic",
@@ -113,8 +135,13 @@ def main() -> None:
     p.add_argument(
         "--record-mp4",
         type=str,
-        default=None,
-        help="若指定输出路径则录制窗口画面为 MP4（帧率同配置 render.fps）",
+        default=VIZ_MP4_HUNTER_POLICY,
+        help="MP4 输出路径（默认 runs/viz_hunter_policy.mp4）",
+    )
+    p.add_argument(
+        "--no-record-mp4",
+        action="store_true",
+        help="只弹窗预览，不写 MP4",
     )
     p.add_argument(
         "--record-max-frames",
@@ -123,6 +150,7 @@ def main() -> None:
         help="最多写入帧数；达到后停止写入但可继续交互，直至退出",
     )
     args = p.parse_args()
+    record_mp4_out = None if args.no_record_mp4 else args.record_mp4
 
     path = Path(args.checkpoint)
     if not path.is_file():
@@ -143,20 +171,35 @@ def main() -> None:
         raise SystemExit("checkpoint 中无 state_dicts['hunter']")
     sd_h = sds["hunter"]
 
-    cfg = _resolve_cfg(ck, args.config)
-    obs_dim, hidden = _infer_backbone(sd_h)
-    pol = ActorCritic(obs_dim, 2, hidden).to(device)
+    cfg = env_cfg_for_viz(args.config, args.max_episode_steps)
+    yaml_disp = args.config
+    print(f"环境参数来自 YAML：{yaml_disp}；sim.max_episode_steps={cfg.sim.max_episode_steps}")
+
+    obs_dim_net, hidden = _infer_backbone(sd_h)
+    env = HuntParallelEnv(cfg=cfg, render_mode="human")
+    o_dim_env = env._obs_dim  # type: ignore[attr-defined]
+    if o_dim_env != obs_dim_net:
+        env.close()
+        raise SystemExit(
+            f"当前 YAML 观测维 {o_dim_env} 与 checkpoint 网络输入维 {obs_dim_net} 不一致。"
+            "请使用与训练一致的 YAML（或更换 checkpoint）。"
+        )
+
+    pol = ActorCritic(obs_dim_net, 2, hidden).to(device)
     pol.load_state_dict(sd_h)
     pol.eval()
 
-    # 与 PPO/预训练推理一致：不更新 running 统计
+    # 与 PPO/预训练推理一致：不更新 running 统计；维数须与环境一致
     obs_rms: RunningMeanStd | None = None
     orm = ck.get("obs_rms")
     if isinstance(orm, dict) and "hunter" in orm:
         st = orm["hunter"]
         d = int(np.asarray(st["mean"]).size)
-        obs_rms = RunningMeanStd(d)
-        obs_rms.set_state(st)
+        if d != o_dim_env:
+            print(f"警告：checkpoint obs_rms 维数 {d} 与 YAML 观测维 {o_dim_env} 不符，跳过 RMS，使用原始观测。")
+        else:
+            obs_rms = RunningMeanStd(d)
+            obs_rms.set_state(st)
 
     al, ah = action_bounds_from_cfg(cfg, "hunter")
     lo = torch.as_tensor(al, dtype=torch.float32, device=device)
@@ -188,17 +231,10 @@ def main() -> None:
                 out[name] = rule_action_escaper(o, cfg)
         return out
 
-    env = HuntParallelEnv(cfg=cfg, render_mode="human")
-    o_dim_env = env._obs_dim  # type: ignore[attr-defined]
-    if o_dim_env != obs_dim:
-        raise SystemExit(
-            f"配置观测维 {o_dim_env} 与网络输入维 {obs_dim} 不一致，请用训练时同一份 config/checkpoint。"
-        )
-
     recorder: Mp4Recorder | None = None
-    if args.record_mp4:
-        recorder = Mp4Recorder(args.record_mp4, cfg.render.fps)
-        print(f"录制 MP4 → {args.record_mp4}，fps={cfg.render.fps}")
+    if record_mp4_out:
+        recorder = Mp4Recorder(record_mp4_out, cfg.render.fps)
+        print(f"录制 MP4 → {record_mp4_out}，fps={cfg.render.fps}")
     rec_cap = args.record_max_frames
 
     import pygame

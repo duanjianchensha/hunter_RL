@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from hunt_env.core.rewards import compute_step_rewards, compute_terminal_rewards
 
@@ -29,6 +30,22 @@ def test_approach_shaping_finite_when_dead_or_placeholder(minimal_cfg) -> None:
     dn = np.full((e, ne), 1.0e6)
     rew, _ = compute_step_rewards(minimal_cfg, prev, now, dp, dn)
     assert np.all(np.isfinite(rew))
+
+
+def test_flee_shaping_sign(minimal_cfg) -> None:
+    """拉远 shaping：距离增大则逃脱者得正增量。"""
+    minimal_cfg.rewards.escaper_flee_shaping_scale = 0.2
+    e, ne = 1, minimal_cfg.agents.n_escapers
+    nh = minimal_cfg.agents.n_hunters
+    prev = np.ones((e, ne), dtype=bool)
+    now = np.ones((e, ne), dtype=bool)
+    dp = np.full((e, ne), 3.0)
+    dn = np.full((e, ne), 5.0)
+    rew, _ = compute_step_rewards(minimal_cfg, prev, now, dp, dn)
+    assert rew[0, nh] == pytest.approx(0.2 * 2.0)
+    dn2 = np.full((e, ne), 2.0)
+    rew2, _ = compute_step_rewards(minimal_cfg, prev, now, dp, dn2)
+    assert rew2[0, nh] == pytest.approx(0.2 * (-1.0))
 
 
 def test_step_capture_reward(minimal_cfg) -> None:

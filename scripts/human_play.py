@@ -7,10 +7,12 @@ import sys
 
 import numpy as np
 
+from hunt_env.cli_defaults import DEFAULT_CONFIG_YAML
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="追猎环境人类试玩")
-    parser.add_argument("--config", type=str, default=None, help="YAML 配置路径")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_YAML, help="YAML 配置路径")
     args = parser.parse_args()
 
     from hunt_env.config.loader import load_config

@@ -16,7 +16,7 @@ import torch.optim as optim
 
 from hunt_env.config.schema import HuntEnvConfig
 from hunt_env.env.vectorized import HuntVectorizedEnv
-from hunt_env.policies.rules import rule_action_escaper
+from hunt_env.policies.rules import rule_action_escaper, rule_action_hunter
 from hunt_rl.actor_critic import ActorCritic, action_bounds_from_cfg
 from hunt_rl.device import get_train_device
 from hunt_rl.running_stats import RunningMeanStd, RunningRewardRMS
@@ -73,6 +73,7 @@ class MultiAgentPPOTrainer:
         device: torch.device | None = None,
         use_cuda_if_available: bool = True,
         escaper_mode: Literal["learn", "rule"] = "learn",
+        hunter_mode: Literal["learn", "rule"] = "learn",
     ):
         self.cfg = cfg
         self.env = vec_env
@@ -84,19 +85,31 @@ class MultiAgentPPOTrainer:
         self.device = device or get_train_device(use_cuda_if_available)
         if escaper_mode not in ("learn", "rule"):
             raise ValueError("escaper_mode 应为 'learn' 或 'rule'")
+        if hunter_mode not in ("learn", "rule"):
+            raise ValueError("hunter_mode 应为 'learn' 或 'rule'")
         if escaper_mode == "rule" and self.nh < 1:
             raise ValueError("escaper_mode=rule 时需至少 1 名猎人用于 RL")
+        if hunter_mode == "rule" and self.nh < 1:
+            raise ValueError("hunter_mode=rule 时需至少 1 名猎人")
+        if hunter_mode == "rule" and self.ne < 1:
+            raise ValueError("hunter_mode=rule 时需至少 1 名逃脱者用于 RL")
         # 逃脱者用规则控制时，不建策略网，仅 PPO 训练猎人
         self._use_rule_escaper: bool = escaper_mode == "rule" and self.ne > 0
+        # 猎人用规则控制时，不建猎人策略网，仅 PPO 训练逃脱者
+        self._use_rule_hunter: bool = hunter_mode == "rule" and self.nh > 0
+        if self._use_rule_escaper and self._use_rule_hunter:
+            raise ValueError("escaper_mode 与 hunter_mode 不能同时为 rule")
 
         self.policies: dict[str, ActorCritic] = {}
         self.optimizers: dict[str, optim.Optimizer] = {}
-        if self.nh > 0:
+        if self.nh > 0 and not self._use_rule_hunter:
             self.policies["hunter"] = ActorCritic(self.obs_dim, 2, hidden_sizes).to(self.device)
             self.optimizers["hunter"] = optim.Adam(self.policies["hunter"].parameters(), lr=self.ppo.lr)
         if self.ne > 0 and not self._use_rule_escaper:
             self.policies["escaper"] = ActorCritic(self.obs_dim, 2, hidden_sizes).to(self.device)
             self.optimizers["escaper"] = optim.Adam(self.policies["escaper"].parameters(), lr=self.ppo.lr)
+        if not self.policies:
+            raise ValueError("未创建任何可训练策略：请检查 nh/ne 与 hunter_mode / escaper_mode")
 
         self._al_h = torch.tensor(action_bounds_from_cfg(cfg, "hunter")[0], device=self.device, dtype=torch.float32)
         self._ah_h = torch.tensor(action_bounds_from_cfg(cfg, "hunter")[1], device=self.device, dtype=torch.float32)
@@ -113,12 +126,12 @@ class MultiAgentPPOTrainer:
         self._obs_rms: dict[str, RunningMeanStd] = {}
         self._rew_rms: dict[str, RunningRewardRMS] = {}
         if self.ppo.normalize_obs:
-            if self.nh > 0:
+            if self.nh > 0 and not self._use_rule_hunter:
                 self._obs_rms["hunter"] = RunningMeanStd(self.obs_dim)
             if self.ne > 0 and not self._use_rule_escaper:
                 self._obs_rms["escaper"] = RunningMeanStd(self.obs_dim)
         if self.ppo.normalize_reward:
-            if self.nh > 0:
+            if self.nh > 0 and not self._use_rule_hunter:
                 self._rew_rms["hunter"] = RunningRewardRMS()
             if self.ne > 0 and not self._use_rule_escaper:
                 self._rew_rms["escaper"] = RunningRewardRMS()
@@ -192,6 +205,16 @@ class MultiAgentPPOTrainer:
         for t in range(num_steps):
             actions = np.zeros((e, n, 2), dtype=np.float32)
             for ni in range(n):
+                if self._use_rule_hunter and ni < self.nh:
+                    for ei in range(e):
+                        raw_a = rule_action_hunter(obs_buf[t, ei, ni], self.cfg)
+                        act_buf[t, ei, ni, 0] = float(raw_a[0])
+                        act_buf[t, ei, ni, 1] = float(raw_a[1])
+                    actions[:, ni, 0] = act_buf[t, :, ni, 0]
+                    actions[:, ni, 1] = act_buf[t, :, ni, 1]
+                    logp_buf[t, :, ni] = 0.0
+                    val_buf[t, :, ni] = 0.0
+                    continue
                 if self._use_rule_escaper and ni >= self.nh:
                     for ei in range(e):
                         raw_a = rule_action_escaper(obs_buf[t, ei, ni], self.cfg)
@@ -217,7 +240,7 @@ class MultiAgentPPOTrainer:
             next_obs, rew, term, trunc, _ = self.env.step(actions)
             rew_buf[t] = rew
             rew_norm_buf[t] = np.asarray(rew, dtype=np.float32, copy=True)
-            if self.ppo.normalize_reward and self.nh > 0:
+            if self.ppo.normalize_reward and self.nh > 0 and not self._use_rule_hunter:
                 h = rew[:, : self.nh]
                 rew_norm_buf[t, :, : self.nh] = self._rew_rms["hunter"].normalize(
                     h.astype(np.float32, copy=False)
@@ -242,6 +265,9 @@ class MultiAgentPPOTrainer:
 
             with torch.no_grad():
                 for ni in range(n):
+                    if self._use_rule_hunter and ni < self.nh:
+                        val_buf[t + 1, :, ni] = 0.0
+                        continue
                     if self._use_rule_escaper and ni >= self.nh:
                         val_buf[t + 1, :, ni] = 0.0
                         continue
@@ -343,7 +369,12 @@ class MultiAgentPPOTrainer:
             metrics["escaper_rew_mean"] = float(np.mean(re))
 
         logs: list[dict[str, float]] = []
-        update_range = range(self.nh) if self._use_rule_escaper else range(self.n_agents)
+        if self._use_rule_escaper:
+            update_range = range(self.nh)
+        elif self._use_rule_hunter:
+            update_range = range(self.nh, self.n_agents)
+        else:
+            update_range = range(self.n_agents)
         for ni in update_range:
             s = self.ppo_update_agent(storage, ni)
             s["agent_idx"] = float(ni)
@@ -358,6 +389,7 @@ class MultiAgentPPOTrainer:
             "cfg": self.cfg.model_dump(),
             "state_dicts": {},
             "escaper_mode": "rule" if self._use_rule_escaper else "learn",
+            "hunter_mode": "rule" if self._use_rule_hunter else "learn",
         }
         for k, pol in self.policies.items():
             payload["state_dicts"][k] = pol.state_dict()
@@ -385,6 +417,10 @@ class MultiAgentPPOTrainer:
             em = payload.get("escaper_mode")
             if em in ("learn", "rule"):
                 load_kwargs["escaper_mode"] = em
+        if "hunter_mode" not in load_kwargs and isinstance(payload, dict):
+            hm = payload.get("hunter_mode")
+            if hm in ("learn", "rule"):
+                load_kwargs["hunter_mode"] = hm
         trainer = cls(cfg, vec_env, **load_kwargs)
         for k, sd in payload["state_dicts"].items():
             if k in trainer.policies:

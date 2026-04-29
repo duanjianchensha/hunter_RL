@@ -5,8 +5,7 @@
 - 行为克隆：策略头输出之均值，监督为规则动作经仿射反变换后的单位盒坐标（与 PPO `act` 的 clip/仿射前语义一致）；
 - 价值头：在规则 rollouts 上用 GAE 回报作回归。
 
-权重与 hunter 的 obs_rms（及可选 rew_rms）存于单独目录，默认不覆盖；后续 PPO 可用
-`--init-hunter` 加载起点做对比实验。
+权重与 hunter 的 obs_rms（及可选 rew_rms）存于单独目录；并行 env 数以 YAML 为准（可用 `--num-envs` 覆盖）；后续 PPO 可用 `--init-hunter`。
 
   pip install -e ".[rl]"
   python scripts/pretrain_hunter_rule.py --config configs/default.yaml --out-dir pretrained/hunter_rule
@@ -29,6 +28,7 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
+from hunt_env.cli_defaults import DEFAULT_CONFIG_YAML
 from hunt_env.env.vectorized import HuntVectorizedEnv
 from hunt_rl.device import get_train_device
 from hunt_rl.pretrain_hunter import HunterPretrainConfig, HunterRulePretrainer, save_hunter_pretrain
@@ -38,7 +38,7 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description="规则示教下并行预训练猎人 ActorCritic（BC + 价值 GAE）"
     )
-    p.add_argument("--config", type=str, default="configs/default.yaml")
+    p.add_argument("--config", type=str, default=DEFAULT_CONFIG_YAML)
     p.add_argument(
         "--out-dir",
         type=str,
@@ -52,7 +52,12 @@ def main() -> None:
         help="总环境步数约等于 num_envs × rollout_len × 更新轮数",
     )
     p.add_argument("--rollout-len", type=int, default=1024)
-    p.add_argument("--num-envs", type=int, default=32, help="并行环境数，越大吞吐越高")
+    p.add_argument(
+        "--num-envs",
+        type=int,
+        default=None,
+        help="并行环境数；默认不指定则沿用 YAML 的 vectorization.num_envs",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--lr", type=float, default=3e-4)

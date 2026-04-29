@@ -1,0 +1,18 @@
+device=cuda, num_envs=32, rollout=1024, target_steps=5000000
+env_steps 327680/5000000 | e_rew_mean=-0.0246 | bc=0.2557 v=3.5960 loss=2.0537
+env_steps 655360/5000000 | e_rew_mean=-0.0276 | bc=0.1888 v=1.9606 loss=1.1691
+env_steps 983040/5000000 | e_rew_mean=-0.0282 | bc=0.1063 v=1.8146 loss=1.0136
+env_steps 1310720/5000000 | e_rew_mean=-0.0340 | bc=0.1186 v=1.8324 loss=1.0348
+env_steps 1638400/5000000 | e_rew_mean=-0.0385 | bc=0.0634 v=2.2990 loss=1.2129
+env_steps 1966080/5000000 | e_rew_mean=-0.0255 | bc=0.0734 v=1.3934 loss=0.7701
+env_steps 2293760/5000000 | e_rew_mean=-0.0221 | bc=0.0884 v=1.4912 loss=0.8340
+env_steps 2621440/5000000 | e_rew_mean=-0.0274 | bc=0.0788 v=1.8103 loss=0.9839
+env_steps 2949120/5000000 | e_rew_mean=-0.0348 | bc=0.0649 v=2.2656 loss=1.1977
+env_steps 3276800/5000000 | e_rew_mean=-0.0257 | bc=0.0671 v=1.5552 loss=0.8447
+env_steps 3604480/5000000 | e_rew_mean=-0.0136 | bc=0.0662 v=1.4936 loss=0.8130
+env_steps 3932160/5000000 | e_rew_mean=-0.0242 | bc=0.0886 v=1.2653 loss=0.7213
+env_steps 4259840/5000000 | e_rew_mean=-0.0331 | bc=0.0601 v=2.1304 loss=1.1253
+env_steps 4587520/5000000 | e_rew_mean=-0.0152 | bc=0.0698 v=0.9681 loss=0.5539
+env_steps 4915200/5000000 | e_rew_mean=-0.0315 | bc=0.0445 v=1.6630 loss=0.8760
+env_steps 5013504/5000000 | e_rew_mean=-0.0275 | bc=0.0500 v=1.5541 loss=0.8271
+已保存: D:\Games\RenGongZhiNeng\hunter\pretrained\escaper_rule\escaper.pt

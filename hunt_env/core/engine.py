@@ -226,11 +226,15 @@ class HuntBatchEngine:
         # 被捕获后速度清零（便于观测与渲染）
         self.speed[:, nh:] = np.where(self.active[:, nh:], self.speed[:, nh:], 0.0)
 
+        need_dist_shaping = (
+            cfg.rewards.hunter_approach_shaping_scale != 0.0
+            or cfg.rewards.escaper_flee_shaping_scale != 0.0
+        )
         rew, just_caught = compute_step_rewards(
             cfg,
             escaper_alive_prev,
             escaper_alive_now,
-            min_prev if cfg.rewards.hunter_approach_shaping_scale != 0.0 else None,
+            min_prev if need_dist_shaping else None,
             np.where(escaper_alive_prev, min_now, far),
         )
 

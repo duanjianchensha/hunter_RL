@@ -65,7 +65,7 @@ docs/              # 本说明 PROJECT.md
 | `sim` | `SimConfig` | `dt` 物理步长；`max_episode_steps`；`seed`（`None` 不固定） |
 | `world` | `WorldConfig` | 轴对齐矩形：`width/height`，左下角 `origin_x/origin_y` |
 | `agents` | `AgentsConfig` | `n_hunters` / `n_escapers`；`hunter_limits` / `escaper_limits`（`max_speed, max_accel, max_omega`）；`spawn`（`uniform` 或 `disk`、圆盘比例等） |
-| `visibility` | `VisibilityConfig` | `view_radius`；可选扇形 `use_sector_fov` + `fov_deg`；`k_visible`（Top-K 他智能体槽位） |
+| `visibility` | `VisibilityConfig` | `view_radius`（默认半径）；可选 `hunter_view_radius` / `escaper_view_radius`（未设则回退到 `view_radius`）；可选扇形 `use_sector_fov` + `fov_deg`；`k_visible`（Top-K 他智能体槽位） |
 | `capture` | `CaptureConfig` | `capture_radius`；`remove_captured`（捕获后从 active 移除） |
 | `observation` | `ObservationConfig` | `use_ego_frame_for_others`；`include_remaining_steps`；`include_captured_count`；`include_world_bounds`（四向边界距） |
 | `rewards` | `RewardsConfig` | 见第 7 节 |
@@ -128,6 +128,7 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 - **猎人（每步）**：`hunter_step` 常数加在每猎人上；有逃脱者在本步**新被捕获**时，每名猎人得 `hunter_capture * n_new`（`n_new` 为本步新捕获人数）。
 - **逃脱者（每步）**：`escaper_caught_penalty` 施加在刚被捕获者上；`escaper_step` 与 `escaper_survive` 对仍存活逃脱者每步加（后者可理解为生存 shaping）。
 - **接近 shaping（猎人）**：若 `hunter_approach_shaping_scale != 0`，用「仍存活逃脱者到最近猎人距离」的减少量对猎人做分滩 shaping；仅当步初/步末该逃脱者均存活时作差，且引擎对无效槽用**有限大**占位距离（不用 `inf`），避免 `inf`/`nan` 进入奖励与 RL 价值学习。
+- **拉远 shaping（逃脱者）**：若 `escaper_flee_shaping_scale != 0`，对每名步初/步末均存活的逃脱者，用「本步最近猎人距离 − 上步该距离」作差，**距离增大为正**，按系数加到该逃脱者奖励上（与猎人接近项对称，便于学「甩开」）。
 - **终局一次性**：`hunter_win` 在 `just_all_caught` 时加在每名猎人上；`escaper_all_caught_penalty` 在全体逃脱者被消灭时加在每名逃脱者上（用于惩罚全灭）。
 
 实现上 `escaper` 的 step 类奖励会乘 `escaper_alive` 掩码，避免已捕获者仍拿 step/survive 正奖励（见 `engine` 中传入的 `escaper_alive_now`）。
@@ -138,7 +139,7 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 
 ### 8.1 可见性
 
-- `visible_pair_mask(pos, theta, active, cfg)` → `(E, N, N)`：对观察者 `i`、目标 `j`（`i≠j`），当双方均 `active`、欧氏距离 ≤ `view_radius`，且（若开启扇形）相对角在 FOV 内，则 `vis[i,j]=True`。**无队伍融合**，同队与敌方规则相同。
+- `visible_pair_mask(pos, theta, active, cfg)` → `(E, N, N)`：对观察者 `i`、目标 `j`（`i≠j`），当双方均 `active`、欧氏距离 ≤ **观察者 `i` 所属角色的视野半径**（猎人用 `hunter_view_radius` 或 `view_radius`，逃脱者用 `escaper_view_radius` 或 `view_radius`），且（若开启扇形）相对角在 FOV 内，则 `vis[i,j]=True`。**无队伍融合**，同队与敌方规则相同。
 
 ### 8.2 Top-K 槽位
 
@@ -209,8 +210,8 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 - **采样子循环**：`storage["obs"]` 存**原始**观测；策略侧经上述规约后调用 `act` 得到环境动作与**未截断** `raw` 存入 `actions`。
 - **GAE**（`compute_gae`）：对**规约后**的逐智能体 `rewards` `(T, E)` 与 `values` 计算；`dones` 为 `term|trunc` 对 env 的掩码；实现见该文件。
 - **Reset 行为**：`num_envs==1` 时，任一步 `done` 则立即 `reset` 下一步观测；`num_envs>1` 时仅当**本步所有 env 都 done** 才整批 `reset`（与注释一致）。
-- **PPO 更新**：对每个要训练的智能体索引分别调用 `ppo_update_agent`（独立优化器与损失聚合）；`escaper_mode=rule` 时只更新 `0..nh-1` 猎人（即逃脱者不更新）。
-- **保存/加载**：`save` 写入 `cfg.model_dump()`、`state_dicts`、**`escaper_mode`**，以及有则写入 **`obs_rms` / `rew_rms` 的 `get_state()`**；`load` 若存在则恢复统计量，旧 checkpoint 可缺省。
+- **PPO 更新**：对每个要训练的智能体索引分别调用 `ppo_update_agent`（独立优化器与损失聚合）；`escaper_mode=rule` 时只更新 `0..nh-1` 猎人（逃脱者不更新）；`hunter_mode=rule` 时只更新 `nh..N-1` 逃脱者（猎人不更新）。两侧不能同时为 `rule`。
+- **保存/加载**：`save` 写入 `cfg.model_dump()`、`state_dicts`、**`escaper_mode` / `hunter_mode`**，以及有则写入 **`obs_rms` / `rew_rms` 的 `get_state()`**；`load` 若存在则恢复统计量，旧 checkpoint 可缺省 `hunter_mode`（视为 `learn`）。
 
 `PPOConfig`：含 `normalize_obs` / `normalize_reward` / `obs_clip`（默认开启规约，见类定义）及学习率、γ、GAE λ、clip、熵/价值系数、epoch 与 minibatch 数、是否标准化 advantage 等。
 
@@ -228,6 +229,11 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 - **BC**：对规则给出的环境动作做逆仿射到 `[-1,1]²` 得 `a_n`，**MSE(μ(s), a_n)** 监督 `ActorCritic` 的均值头（与 PPO 中 raw 的常用中心一致）。
 - **价值**：以当前网络对 `V(s)、V(s')` 的估计与**规约后**逐猎人奖励，用**同一** `compute_gae` 得回报 `ret`，**MSE(V(s), ret)**；观测/奖励规约与 PPO 默认（`HunterPretrainConfig`）可对齐，便于 `save_hunter_pretrain` 与后续 `MultiAgentPPOTrainer` 共享 `hunter` 的 `state_dict` 与 `obs_rms` / `rew_rms` 键。
 
+### 11.6 逃脱者规则预训练（`pretrain_escaper.py` + `scripts/pretrain_escaper_rule.py`）
+
+- **示教**：环境中猎人为 `rule_action_hunter`、逃脱者为 `rule_action_escaper`（与猎人预训练同一套规则对手）；并行采集。
+- **BC + 价值**：对逃脱者槽位做 **MSE(μ, a_n)** 与 **GAE 回报** 价值回归（`EscaperPretrainConfig`）；`save_escaper_pretrain` 写入 `escaper` 键与 `hunter_mode: rule` 元信息，供 `train_escaper_ppo_rule_hunter.py` 或双边 PPO 的 `--init-escaper` 热启动。
+
 ---
 
 ## 12. 脚本入口
@@ -237,11 +243,14 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 | `scripts/human_play.py` | 键盘控制**一名**智能体（W/S 线加减速，A/D 角速度，Q 切换智能体），其余发零动作；`render_mode=human` |
 | `scripts/viz_rule_baseline.py` | 规则策略：用当步 `obs` 字典（`build_rule_actions_dict`）驱动，不读 `engine` 真值；`--max-episodes` 控制自动退出局数（默认 3，≤0 不限）；可选 `--record-mp4` |
 | `scripts/viz_hunter_policy.py` | 从 checkpoint 加载猎人策略 + 规则逃脱者同场可视化；同上 `--max-episodes`；可选 `--record-mp4`、`--record-max-frames`；`HuntParallelEnv.render(rgb=True)` 在 human 模式下额外返回 RGB 帧供编码 |
-| `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device`、可选 `--init-hunter`；可选 `--log-file` 将控制台日志同步写入 UTF-8 文件 |
+| `scripts/viz_escaper_policy.py` | 从 checkpoint 加载逃脱者策略 + 规则猎人同场可视化；参数与上类似（`--checkpoint` 需含 `state_dicts['escaper']`） |
+| `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device`、可选 `--init-hunter` / `--init-escaper`；可选 `--log-file` 将控制台日志同步写入 UTF-8 文件 |
 | `scripts/pretrain_hunter_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC（策略均值）+ GAE 价值** 预训练猎人；权重写入独立目录；可选 `--log-file` |
-| `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper`；可选 `--log-file` |
+| `scripts/pretrain_escaper_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC + GAE 价值** 预训练逃脱者；权重写入独立目录（如 `pretrained/escaper_rule/escaper.pt`）；可选 `--log-file` |
+| `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper`；可选 `--log-file`、`--init-hunter` |
+| `scripts/train_escaper_ppo_rule_hunter.py` | 仅训逃脱者；猎人动作为 `rule_action_hunter`；可选 `--log-file`、`--init-escaper` |
 
-**人类试玩**与真实训练差异：试玩中未控制者动作为零；训练使用 RL 策略或 `escaper_mode=rule` 下与网络**同 obs** 的规则逃脱者。
+**人类试玩**与真实训练差异：试玩中未控制者动作为零；训练使用 RL 策略，或 `escaper_mode=rule` / `hunter_mode=rule` 下与网络**同 obs** 的规则对手。
 
 ---
 

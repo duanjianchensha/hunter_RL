@@ -29,7 +29,8 @@ def visible_pair_mask(
     both = active[:, :, np.newaxis] & active[:, np.newaxis, :]
     both = both & ~np.broadcast_to(eye, both.shape)
 
-    in_range = dist <= cfg.visibility.view_radius
+    rad = cfg.visibility.radii_per_observer(cfg.agents.n_hunters, n)
+    in_range = dist <= rad[np.newaxis, :, np.newaxis]
 
     if cfg.visibility.use_sector_fov and cfg.visibility.fov_deg is not None:
         half = np.deg2rad(cfg.visibility.fov_deg) / 2.0
