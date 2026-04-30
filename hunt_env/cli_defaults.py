@@ -15,6 +15,7 @@ VIZ_SEED = 0
 VIZ_MAX_EPISODES = 10
 VIZ_MP4_HUNTER_POLICY = "runs/viz_hunter_policy.mp4"
 VIZ_MP4_ESCAPER_POLICY = "runs/viz_escaper_policy.mp4"
+VIZ_MP4_DUAL_POLICY = "runs/viz_dual_policy.mp4"
 VIZ_MP4_RULE_BASELINE = "runs/viz_rule_baseline.mp4"
 
 

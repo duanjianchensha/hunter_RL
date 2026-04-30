@@ -244,7 +244,9 @@ info 含: just_caught, all_caught, timeout, visibility (visible_pair_mask)
 | `scripts/viz_rule_baseline.py` | 规则策略：用当步 `obs` 字典（`build_rule_actions_dict`）驱动，不读 `engine` 真值；`--max-episodes` 控制自动退出局数（默认 3，≤0 不限）；可选 `--record-mp4` |
 | `scripts/viz_hunter_policy.py` | 从 checkpoint 加载猎人策略 + 规则逃脱者同场可视化；同上 `--max-episodes`；可选 `--record-mp4`、`--record-max-frames`；`HuntParallelEnv.render(rgb=True)` 在 human 模式下额外返回 RGB 帧供编码 |
 | `scripts/viz_escaper_policy.py` | 从 checkpoint 加载逃脱者策略 + 规则猎人同场可视化；参数与上类似（`--checkpoint` 需含 `state_dicts['escaper']`） |
+| `scripts/viz_dual_policy.py` | 同一 `.pt` 同时加载猎人 + 逃脱者网络（须含两侧 `state_dicts`）；环境与 `viz_hunter_policy` 一致以 YAML 为准 |
 | `scripts/train_ppo.py` | 双端（或仅剩一侧）PPO 训练；`--total-steps`、`--rollout-len`、`--num-envs`、`--device`、可选 `--init-hunter` / `--init-escaper`；可选 `--log-file` 将控制台日志同步写入 UTF-8 文件 |
+| `scripts/train_bilateral_ppo.py` | 双边同时 PPO 便捷入口（默认 `--save runs/bilateral_ppo.pt`、`--total-steps 50000000`、`--save-every 5000000`）；环境与并行数默认来自 YAML；可选双方 `--init-*` |
 | `scripts/pretrain_hunter_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC（策略均值）+ GAE 价值** 预训练猎人；权重写入独立目录；可选 `--log-file` |
 | `scripts/pretrain_escaper_rule.py` | 规则猎人 + 规则逃脱者并行采样，**BC + GAE 价值** 预训练逃脱者；权重写入独立目录（如 `pretrained/escaper_rule/escaper.pt`）；可选 `--log-file` |
 | `scripts/train_hunter_ppo_rule_escaper.py` | 仅训猎人；逃脱者动作为 `rule_action_escaper`；可选 `--log-file`、`--init-hunter` |

@@ -27,10 +27,17 @@ from hunt_rl.device import get_train_device
 from hunt_rl.trainer import MultiAgentPPOTrainer, PPOConfig
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="追猎环境 PPO 训练（PyTorch）")
+def build_train_ppo_parser(description: str | None = None) -> argparse.ArgumentParser:
+    """供 `train_ppo.py` 与 `train_bilateral_ppo.py` 共用同一套 CLI 参数。"""
+    desc = description or "追猎环境 PPO 训练（PyTorch）"
+    p = argparse.ArgumentParser(description=desc)
     p.add_argument("--config", type=str, default=DEFAULT_CONFIG_YAML, help="YAML 配置路径")
-    p.add_argument("--total-steps", type=int, default=100_000, help="目标环境步数（约等于并行 env 数 × rollout 步数 × 更新次数）")
+    p.add_argument(
+        "--total-steps",
+        type=int,
+        default=100_000,
+        help="目标环境步数（约等于并行 env 数 × rollout 步数 × 更新次数）",
+    )
     p.add_argument("--rollout-len", type=int, default=2048, help="每次更新前采集的步数")
     p.add_argument("--num-envs", type=int, default=None, help="并行环境数（默认读配置 vectorization.num_envs）")
     p.add_argument("--seed", type=int, default=0)
@@ -56,15 +63,20 @@ def main() -> None:
         default=None,
         help="若指定路径，将 stdout/stderr 同步写入该日志文件（UTF-8），控制台仍输出",
     )
+    return p
+
+
+def main() -> None:
+    p = build_train_ppo_parser()
     args = p.parse_args()
 
     from hunt_rl.train_log import tee_stdout_stderr
 
     with tee_stdout_stderr(args.log_file):
-        _train_ppo_run(args)
+        run_train_ppo(args)
 
 
-def _train_ppo_run(args: Namespace) -> None:
+def run_train_ppo(args: Namespace) -> None:
     if args.device == "auto":
         device = get_train_device(prefer_cuda=True)
     elif args.device == "cuda":
@@ -139,6 +151,8 @@ def _train_ppo_run(args: Namespace) -> None:
         parts = [f"step {total}/{args.total_steps}"]
         if "hunter_rew_mean" in metrics:
             parts.append(f"h_rew_mean={metrics['hunter_rew_mean']:.4f}")
+        if "escaper_rew_mean" in metrics:
+            parts.append(f"e_rew_mean={metrics['escaper_rew_mean']:.4f}")
         for lg in logs:
             i = int(lg.get("agent_idx", 0))
             parts.append(f"ag{i} loss={lg['loss']:.4f} pg={lg['pg']:.4f} v={lg['v']:.4f}")

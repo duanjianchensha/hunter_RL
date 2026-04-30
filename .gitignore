@@ -39,13 +39,8 @@ Desktop.ini
 
 # 训练与实验产出（按需调整：若需提交小模型可改为具体路径 + !例外规则）
 checkpoints/
-runs/
-logs/
 wandb/
 mlruns/
-*.pt
-*.pth
-*.ckpt
 
 # 本地/编辑器（若团队需共享 .vscode，可删除下一行）
 .vscode/
